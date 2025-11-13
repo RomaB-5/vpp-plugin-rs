@@ -43,6 +43,7 @@ fn main() {
         .allowlist_file(".*/vlib/buffer_funcs\\.h")
         .allowlist_file(".*/vlib/cli\\.h")
         .allowlist_file(".*/vlib/config\\.h")
+        .allowlist_file(".*/vlib/counter\\.h")
         .allowlist_file(".*/vlib/defs\\.h")
         .allowlist_file(".*/vlib/global_funcs\\.h")
         .allowlist_file(".*/vlib/init\\.h")

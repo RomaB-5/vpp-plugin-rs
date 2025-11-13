@@ -104,3 +104,13 @@ vl_api_helper_send_msg(vl_api_registration_t *rp, u8 *elem)
 {
     vl_api_send_msg(rp, elem);
 }
+
+void vlib_helper_zero_simple_counter(vlib_simple_counter_main_t *cm, u32 index)
+{
+    vlib_zero_simple_counter(cm, index);
+}
+
+void vlib_helper_zero_combined_counter(vlib_combined_counter_main_t *cm, u32 index)
+{
+    vlib_zero_combined_counter(cm, index);
+}

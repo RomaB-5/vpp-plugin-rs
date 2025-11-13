@@ -8,6 +8,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+lazy_static = "1.5.0"
 vpp-plugin = { path = "../vpp-plugin" }
 
 [build-dependencies]

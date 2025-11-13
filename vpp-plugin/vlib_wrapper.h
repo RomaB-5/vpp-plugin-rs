@@ -34,3 +34,6 @@ void vlib_helper_unformat_free(unformat_input_t * input);
 vl_api_registration_t *vl_api_helper_client_index_to_registration(u32 index);
 api_main_t *vlibapi_helper_get_main(void);
 void vl_api_helper_send_msg(vl_api_registration_t *rp, u8 *elem);
+
+void vlib_helper_zero_simple_counter(vlib_simple_counter_main_t * cm, u32 index);
+void vlib_helper_zero_combined_counter(vlib_combined_counter_main_t * cm, u32 index);

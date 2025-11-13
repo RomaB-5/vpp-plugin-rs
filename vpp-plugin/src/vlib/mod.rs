@@ -4,6 +4,7 @@
 
 pub mod buffer;
 pub mod cli;
+pub mod counter;
 pub mod main;
 pub mod node;
 pub mod node_generic;

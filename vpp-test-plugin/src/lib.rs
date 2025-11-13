@@ -1,12 +1,14 @@
 //! Test VPP plugin
 //!
 
+use lazy_static::lazy_static;
 use std::{fmt, ptr::NonNull, str::FromStr, sync::atomic::AtomicU64};
 
 use vpp_plugin::{
     bindings::{ip4_header_t, vnet_api_error_t_VNET_API_ERROR_INVALID_VALUE},
     vlib::{
         self,
+        counter::{SimpleCounter, SimpleCounterIndex},
         node_generic::{generic_feature_node_x1, FeatureNextNode, GenericFeatureNodeX1},
         BufferIndex,
     },
@@ -115,6 +117,11 @@ fn increment_drop_counter_cached(
 
 static TEST_NODE: TestNode = TestNode::new();
 
+lazy_static! {
+    static ref SIMPLE_COUNTER: SimpleCounter =
+        SimpleCounter::new("test-simple", "/net/test/simple");
+}
+
 #[vlib_node(
     name = "test",
     instance = TEST_NODE,
@@ -173,6 +180,10 @@ impl vlib::node::Node for TestNode {
                     4 => {
                         increment_drop_counter_cached(vm, node, 1);
                         TestNextNode::Drop.into()
+                    }
+                    5 => {
+                        SimpleCounterIndex::from_parts(&SIMPLE_COUNTER, 0).increment(vm, 1);
+                        FeatureNextNode::NextFeature
                     }
                     _ => {
                         b0.set_error(node, TestErrorCounter::Drop);
@@ -298,6 +309,41 @@ fn message_test_command(
     Ok(())
 }
 
+#[vlib_cli_command(
+    path = "rust-test counter",
+    short_help = "rust-test counter <simple|combined>"
+)]
+fn counter_test_command(vm: &mut vlib::BarrierHeldMainRef, input: &str) -> Result<(), ErrorStack> {
+    if input == "simple" {
+        let counter = SimpleCounter::new("ut-simple", "/net/ut/simple");
+        let counter_index = counter.allocate_index(vm, 0);
+        let (counter_ref, index) = counter_index.into_parts();
+        let counter_index = unsafe { SimpleCounterIndex::from_parts(counter_ref, index) };
+        counter_index.increment(vm, 1);
+        let counter_val = counter_index.get(vm);
+        if counter_val != 1 {
+            return Err(ErrorStack::msg(format!(
+                "Expected counter value to be 1 instead of {}",
+                counter_val
+            )));
+        }
+        unsafe {
+            counter_index.zero();
+        }
+        let counter_val = counter_index.get(vm);
+        if counter_val != 0 {
+            return Err(ErrorStack::msg(format!(
+                "Expected counter value to be 0 instead of {}",
+                counter_val
+            )));
+        }
+    } else {
+        return Err(ErrorStack::msg(format!("Unrecognised input {}", input)));
+    }
+
+    Ok(())
+}
+
 struct ApiHandler;
 
 impl test_api::Handlers for ApiHandler {
@@ -322,8 +368,9 @@ impl test_api::Handlers for ApiHandler {
 }
 
 #[vlib_init_function]
-fn test_init(_vm: &mut vlib::BarrierHeldMainRef) -> Result<(), ErrorStack> {
+fn test_init(vm: &mut vlib::BarrierHeldMainRef) -> Result<(), ErrorStack> {
     test_api::test_register_messages::<ApiHandler>();
+    SIMPLE_COUNTER.allocate_index(vm, 0);
 
     Ok(())
 }

@@ -2315,6 +2315,9 @@ impl Default for vlib_simple_counter_main_t {
         }
     }
 }
+unsafe extern "C" {
+    pub fn vlib_simple_counter_n_counters(cm: *const vlib_simple_counter_main_t) -> u32_;
+}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct vlib_combined_counter_main_t {
@@ -2331,6 +2334,33 @@ impl Default for vlib_combined_counter_main_t {
             s.assume_init()
         }
     }
+}
+unsafe extern "C" {
+    pub fn vlib_combined_counter_n_counters(cm: *const vlib_combined_counter_main_t) -> u32_;
+}
+unsafe extern "C" {
+    pub fn vlib_clear_simple_counters(cm: *mut vlib_simple_counter_main_t);
+}
+unsafe extern "C" {
+    pub fn vlib_clear_combined_counters(cm: *mut vlib_combined_counter_main_t);
+}
+unsafe extern "C" {
+    pub fn vlib_validate_simple_counter(cm: *mut vlib_simple_counter_main_t, index: u32_);
+}
+unsafe extern "C" {
+    pub fn vlib_free_simple_counter(cm: *mut vlib_simple_counter_main_t);
+}
+unsafe extern "C" {
+    pub fn vlib_validate_combined_counter(cm: *mut vlib_combined_counter_main_t, index: u32_);
+}
+unsafe extern "C" {
+    pub fn vlib_validate_combined_counter_will_expand(
+        cm: *mut vlib_combined_counter_main_t,
+        index: u32_,
+    ) -> ::std::os::raw::c_int;
+}
+unsafe extern "C" {
+    pub fn vlib_free_combined_counter(cm: *mut vlib_combined_counter_main_t);
 }
 pub type vlib_init_function_t =
     ::std::option::Option<unsafe extern "C" fn(vm: *mut vlib_main_t) -> *mut clib_error_t>;
@@ -7874,6 +7904,12 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn vl_api_helper_send_msg(rp: *mut vl_api_registration_t, elem: *mut u8_);
+}
+unsafe extern "C" {
+    pub fn vlib_helper_zero_simple_counter(cm: *mut vlib_simple_counter_main_t, index: u32_);
+}
+unsafe extern "C" {
+    pub fn vlib_helper_zero_combined_counter(cm: *mut vlib_combined_counter_main_t, index: u32_);
 }
 pub type __builtin_va_list = [__va_list_tag; 1usize];
 #[repr(C)]

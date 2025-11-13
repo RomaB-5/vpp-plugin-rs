@@ -201,6 +201,25 @@ class IntegrationTestCase(VppTestCase):
         # Clean up
         self.enable_disable_api(self.pg0.sw_if_index, False)
 
+    def test_node_simple_counter(self):
+        """Feature node incrementing simple counter"""
+        simple_count = self.statistics.get_counter("/net/test/simple")[0][0]
+        self.enable_disable_api(self.pg0.sw_if_index, True)
+
+        packet = self.create_packet(5)
+        self.logger.info(ppp("Sending packet:", packet))
+        self.pg0.add_stream(packet)
+        self.pg_start()
+
+        self.logger.debug(self.vapi.cli("show trace"))
+
+        # Expect the packet counter to have been incremented by one
+        new_simple_count = self.statistics.get_counter("/net/test/simple")[0][0]
+        self.assertEqual(new_simple_count, simple_count + 1)
+
+        # Clean up
+        self.enable_disable_api(self.pg0.sw_if_index, False)
+
     def test_vnet_error(self):
         """VNET error being generated and returned from a CLI command"""
         self.cli_verify_response(f"rust-test negative vnet-error", "rust-test negative: Invalid value (Test)")
@@ -208,6 +227,10 @@ class IntegrationTestCase(VppTestCase):
     def test_message(self):
         """Messages"""
         self.cli_verify_no_response("rust-test message")
+
+    def test_counters(self):
+        """Counters"""
+        self.cli_verify_no_response(f"rust-test counter simple")
 
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

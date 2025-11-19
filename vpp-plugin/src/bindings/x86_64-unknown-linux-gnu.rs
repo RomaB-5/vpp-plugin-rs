@@ -7861,13 +7861,6 @@ unsafe extern "C" {
     pub fn vlib_helper_format_ip6_header(s: *mut u8_, ...) -> *mut u8_;
 }
 unsafe extern "C" {
-    pub fn vlib_helper_feature_next_with_data(
-        next0: *mut u32_,
-        b0: *mut vlib_buffer_t,
-        n_data_bytes: u32_,
-    ) -> *mut ::std::os::raw::c_void;
-}
-unsafe extern "C" {
     pub fn vlib_helper_unformat_get_input(input: *mut unformat_input_t) -> uword;
 }
 unsafe extern "C" {

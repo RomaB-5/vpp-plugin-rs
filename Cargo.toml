@@ -9,3 +9,4 @@ panic = "abort"
 lto = "fat"
 # One unit per crate (optimisation is per unit, so this gives the best effectivity of lto at the expense of compile time)
 codegen-units = 1
+debug = true

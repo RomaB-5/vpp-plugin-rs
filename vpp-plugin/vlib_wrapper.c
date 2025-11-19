@@ -77,11 +77,6 @@ u8 *vlib_helper_format_ip6_header (u8 *s, ...)
     return s;
 }
 
-void *vlib_helper_feature_next_with_data (u32 *next0, vlib_buffer_t *b0, u32 n_data_bytes)
-{
-    return vnet_feature_next_with_data(next0, b0, n_data_bytes);
-}
-
 uword vlib_helper_unformat_get_input(unformat_input_t * input)
 {
     return unformat_get_input(input);

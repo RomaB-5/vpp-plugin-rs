@@ -13,10 +13,9 @@ use bitflags::bitflags;
 use crate::{
     bindings::{
         vlib_add_trace, vlib_buffer_func_main, vlib_buffer_t, vlib_buffer_t__bindgen_ty_1,
-        vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1,
-        vlib_helper_feature_next_with_data, CLIB_LOG2_CACHE_LINE_BYTES, VLIB_BUFFER_EXT_HDR_VALID,
-        VLIB_BUFFER_IS_TRACED, VLIB_BUFFER_MIN_CHAIN_SEG_SIZE, VLIB_BUFFER_NEXT_PRESENT,
-        VLIB_BUFFER_PRE_DATA_SIZE, VLIB_BUFFER_TOTAL_LENGTH_VALID,
+        vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1, CLIB_LOG2_CACHE_LINE_BYTES,
+        VLIB_BUFFER_EXT_HDR_VALID, VLIB_BUFFER_IS_TRACED, VLIB_BUFFER_MIN_CHAIN_SEG_SIZE,
+        VLIB_BUFFER_NEXT_PRESENT, VLIB_BUFFER_PRE_DATA_SIZE, VLIB_BUFFER_TOTAL_LENGTH_VALID,
     },
     vlib::{
         node::{ErrorCounters, Node, NodeRuntimeRef, VectorBufferIndex},
@@ -141,7 +140,7 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe { (*self.as_ptr()).__bindgen_anon_1.as_mut() }
     }
 
-    fn as_metadata(&self) -> &vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
+    pub(crate) fn as_metadata(&self) -> &vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
         // SAFETY: since the reference to self is valid, so must be the pointer and it's safe to
         // use the __bindgen_anon_1 union arm since the union is just present to force alignment
         // Creation preconditions mean there are no aliased accesses to the buffer so it's fine
@@ -149,7 +148,9 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe { self.as_details().__bindgen_anon_1.__bindgen_anon_1.as_ref() }
     }
 
-    fn as_metadata_mut(&mut self) -> &mut vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
+    pub(crate) fn as_metadata_mut(
+        &mut self,
+    ) -> &mut vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
         // SAFETY: since the reference to self is valid, so must be the pointer and it's safe to
         // use the __bindgen_anon_1 union arm since the union is just present to force alignment.
         // Creation preconditions mean there are no aliased accesses to the buffer so it's fine
@@ -302,27 +303,6 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe {
             let error_value = (*node.as_ptr()).errors.add(error.into_u16() as usize);
             self.as_metadata_mut().error = *error_value;
-        }
-    }
-}
-
-impl<FeatureData: Copy> BufferRef<FeatureData> {
-    /// Get the next feature node and feature data for this buffer
-    ///
-    /// Used when continuing to the next feature node in a node invoked from a feature arc.
-    pub fn vnet_feature_next(&self) -> (u32, FeatureData) {
-        // SAFETY: we have a reference to self so the pointer must be valid, the number of bytes
-        // requested matches the size of the FeatureData type and
-        // `vlib_helper_feature_next_with_data` cannot fail.
-        unsafe {
-            let mut next = MaybeUninit::uninit();
-            // TODO: this is in hot path, so optimise for different micro-architectures and don't just do one buffer at a time
-            let feature_data = vlib_helper_feature_next_with_data(
-                next.as_mut_ptr(),
-                self.as_ptr(),
-                std::mem::size_of::<FeatureData>() as u32,
-            );
-            (next.assume_init(), *(feature_data as *const FeatureData))
         }
     }
 }

@@ -69,13 +69,12 @@ where
     let mut b = ArrayVec::new();
 
     let from = frame.get_buffers::<FRAME_SIZE>(vm, &mut b);
-    let b_len = b.len();
 
     for (i, b0) in b.iter_mut().enumerate() {
         let next = generic_node_impl.map_buffer_to_next(vm, node, b0);
         let next = match next {
-            FeatureNextNode::DefinedNode(next) => next.into_u16(),
             FeatureNextNode::NextFeature => b0.vnet_feature_next().0 as u16,
+            FeatureNextNode::DefinedNode(next) => next.into_u16(),
         };
         nexts.get_unchecked_mut(i).write(next);
     }
@@ -93,5 +92,5 @@ where
         )),
     );
 
-    b_len as u16
+    frame.vector().len() as u16
 }

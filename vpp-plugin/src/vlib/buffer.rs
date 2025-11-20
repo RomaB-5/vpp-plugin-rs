@@ -209,13 +209,7 @@ impl<FeatureData> BufferRef<FeatureData> {
 
         // SAFETY: current_data is asserted to be valid and point into valid (but possibly
         // unintialised) data or pre_data.
-        unsafe {
-            if current_data >= 0 {
-                data.add(current_data as usize)
-            } else {
-                data.sub(-current_data as usize)
-            }
-        }
+        unsafe { data.offset(current_data as isize) }
     }
 
     // vlib_buffer_has_space
@@ -264,11 +258,7 @@ impl<FeatureData> BufferRef<FeatureData> {
         // current_length` asserted to point to the end of valid (but possibly unintialised) data
         // or pre_data.
         unsafe {
-            let ptr = if current_data >= 0 {
-                data.add(current_data as usize)
-            } else {
-                data.sub(-current_data as usize)
-            };
+            let ptr = data.offset(current_data as isize);
             ptr.add(self.current_length() as usize)
         }
     }

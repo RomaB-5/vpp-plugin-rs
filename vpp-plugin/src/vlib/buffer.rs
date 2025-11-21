@@ -5,7 +5,7 @@
 //! It also includes buffer allocation and deallocation functions.
 //! The goal is to provide a safe and ergonomic interface for working with VPP buffers.
 
-use std::mem::MaybeUninit;
+use std::{hint::assert_unchecked, mem::MaybeUninit};
 
 use arrayvec::ArrayVec;
 use bitflags::bitflags;
@@ -21,6 +21,7 @@ use crate::{
         node::{ErrorCounters, Node, NodeRuntimeRef, VectorBufferIndex},
         MainRef,
     },
+    vppinfra::likely,
 };
 
 #[cfg(feature = "experimental")]
@@ -358,6 +359,81 @@ impl fmt::Display for BufferAllocError {
 #[cfg(feature = "experimental")]
 impl std::error::Error for BufferAllocError {}
 
+/// u64 x 8
+///
+/// This type exists to strongly hint to the compiler that it should emit vector instructions.
+///
+/// In the future, the implementation might be changed to use standard library portable SIMD once
+/// stabilised (https://github.com/rust-lang/rust/issues/86656), or use arch-specific intrinsics
+/// (if evidenced by high-enough performance improvement).
+#[allow(non_camel_case_types)]
+pub(crate) struct u64x8([u64; 8]);
+
+impl u64x8 {
+    /// Construct a `u64x8` from an array of 8 `u64`s
+    #[inline(always)]
+    pub(crate) fn from_array(a: [u64; 8]) -> Self {
+        Self(a)
+    }
+
+    /// Construct a `u64x8` from a pointer to 8 `u32`s
+    #[inline(always)]
+    pub(crate) unsafe fn from_u32_ptr(ptr: *const u32) -> Self {
+        Self([
+            *ptr.add(0) as u64,
+            *ptr.add(1) as u64,
+            *ptr.add(2) as u64,
+            *ptr.add(3) as u64,
+            *ptr.add(4) as u64,
+            *ptr.add(5) as u64,
+            *ptr.add(6) as u64,
+            *ptr.add(7) as u64,
+        ])
+    }
+
+    /// Shift each element to the left by a given constant value, assigning the result to `self`
+    #[inline(always)]
+    pub(crate) fn shift_elements_left<const OFFSET: u32>(&mut self) {
+        for a in &mut self.0 {
+            *a <<= OFFSET;
+        }
+    }
+
+    /// Add a given value to each element, returning a new u64x8 with the result
+    #[inline(always)]
+    pub(crate) fn add_u64(&self, value: u64) -> Self {
+        Self::from_array([
+            self.0[0] + value,
+            self.0[1] + value,
+            self.0[2] + value,
+            self.0[3] + value,
+            self.0[4] + value,
+            self.0[5] + value,
+            self.0[6] + value,
+            self.0[7] + value,
+        ])
+    }
+
+    /// Write 8 contiguous elements starting from `ptr`
+    #[inline(always)]
+    pub(crate) unsafe fn store(&self, ptr: *mut u64) {
+        *ptr.add(0) = self.0[0];
+        *ptr.add(1) = self.0[1];
+        *ptr.add(2) = self.0[2];
+        *ptr.add(3) = self.0[3];
+        *ptr.add(4) = self.0[4];
+        *ptr.add(5) = self.0[5];
+        *ptr.add(6) = self.0[6];
+        *ptr.add(7) = self.0[7];
+    }
+}
+
+/// Round a value up to the next multiple of the given power-of-two
+const fn next_multiple_of_pow2(val: usize, pow2: usize) -> usize {
+    debug_assert!(pow2.is_power_of_two());
+    (val + pow2 - 1) & !(pow2 - 1)
+}
+
 impl MainRef {
     /// Get pointers to buffers for the given buffer indices, writing them into the provided `to` arrayvec.
     ///
@@ -376,6 +452,9 @@ impl MainRef {
     /// - Each buffer's `feature_arc_index` and `current_config_index` must be consistent with
     ///   the `FeatureData` type. If they are not known (i.e. because the caller the node isn't
     ///   being executed in a feature arc), FeatureData should be a zero-sized type such as `()`.
+    /// - The capacity of `from_indices` must be a multiple of 8 (note though that the length is
+    ///   allowed not to be). In other words, it must be valid to read multiples of 8 from the
+    ///   underlying memory (possibly returning uninitialised or stale data) without faulting.
     #[inline(always)]
     pub unsafe fn get_buffers<'a, 'me, 'buf: 'me, FeatureData, const N: usize>(
         &'me self,
@@ -383,14 +462,131 @@ impl MainRef {
         to: &mut ArrayVec<&'buf mut BufferRef<FeatureData>, N>,
     ) {
         debug_assert!(from_indices.len() <= N);
+        assert_unchecked(from_indices.len() <= N);
+
+        #[cfg(debug_assertions)]
+        for from_index in from_indices {
+            let buffer_mem_size = (*(*self.as_ptr()).buffer_main).buffer_mem_size;
+            debug_assert!(((*from_index << CLIB_LOG2_CACHE_LINE_BYTES) as u64) < buffer_mem_size);
+        }
 
         let buffer_mem_start = (*(*self.as_ptr()).buffer_main).buffer_mem_start;
-        let base = buffer_mem_start as *const i8;
-        for from_index in from_indices.iter() {
-            let ptr = base.add((*from_index << CLIB_LOG2_CACHE_LINE_BYTES) as usize)
-                as *mut vlib_buffer_t;
-            to.push_unchecked(BufferRef::from_ptr_mut(ptr));
+
+        // Check for the ArrayVec capacity being a multiple of 8 and if so the later
+        // implementation can perform a write of 8 elements at a time without worrying about
+        // writing beyond the end of the ArrayVec. If not, then fall back to a generic
+        // implementation. This check will be evaluated at compile time and one implementation
+        // or the other chosen.
+        if !N.is_multiple_of(8) {
+            let base = buffer_mem_start as *const i8;
+            for from_index in from_indices.iter() {
+                let ptr = base.add((*from_index << CLIB_LOG2_CACHE_LINE_BYTES) as usize)
+                    as *mut vlib_buffer_t;
+                to.push_unchecked(BufferRef::from_ptr_mut(ptr));
+            }
+            return;
         }
+
+        let mut len = from_indices.len();
+        len = next_multiple_of_pow2(len, 8);
+
+        let mut from_index = from_indices.as_ptr();
+        let mut to_ptr = to.as_mut_ptr();
+
+        while len >= 64 {
+            let mut from_index_x8_1 = u64x8::from_u32_ptr(from_index);
+            let mut from_index_x8_2 = u64x8::from_u32_ptr(from_index.add(8));
+            let mut from_index_x8_3 = u64x8::from_u32_ptr(from_index.add(2 * 8));
+            let mut from_index_x8_4 = u64x8::from_u32_ptr(from_index.add(3 * 8));
+            let mut from_index_x8_5 = u64x8::from_u32_ptr(from_index.add(4 * 8));
+            let mut from_index_x8_6 = u64x8::from_u32_ptr(from_index.add(5 * 8));
+            let mut from_index_x8_7 = u64x8::from_u32_ptr(from_index.add(6 * 8));
+            let mut from_index_x8_8 = u64x8::from_u32_ptr(from_index.add(7 * 8));
+
+            from_index_x8_1.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            from_index_x8_2.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            from_index_x8_3.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            from_index_x8_4.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            from_index_x8_5.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            from_index_x8_6.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            from_index_x8_7.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            from_index_x8_8.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+
+            let buf_ptr_x8_1 = from_index_x8_1.add_u64(buffer_mem_start);
+            let buf_ptr_x8_2 = from_index_x8_2.add_u64(buffer_mem_start);
+            let buf_ptr_x8_3 = from_index_x8_3.add_u64(buffer_mem_start);
+            let buf_ptr_x8_4 = from_index_x8_4.add_u64(buffer_mem_start);
+            let buf_ptr_x8_5 = from_index_x8_5.add_u64(buffer_mem_start);
+            let buf_ptr_x8_6 = from_index_x8_6.add_u64(buffer_mem_start);
+            let buf_ptr_x8_7 = from_index_x8_7.add_u64(buffer_mem_start);
+            let buf_ptr_x8_8 = from_index_x8_8.add_u64(buffer_mem_start);
+
+            buf_ptr_x8_1.store(to_ptr as *mut u64);
+            buf_ptr_x8_2.store(to_ptr.add(8) as *mut u64);
+            buf_ptr_x8_3.store(to_ptr.add(2 * 8) as *mut u64);
+            buf_ptr_x8_4.store(to_ptr.add(3 * 8) as *mut u64);
+            buf_ptr_x8_5.store(to_ptr.add(4 * 8) as *mut u64);
+            buf_ptr_x8_6.store(to_ptr.add(5 * 8) as *mut u64);
+            buf_ptr_x8_7.store(to_ptr.add(6 * 8) as *mut u64);
+            buf_ptr_x8_8.store(to_ptr.add(7 * 8) as *mut u64);
+
+            to_ptr = to_ptr.add(64);
+            from_index = from_index.add(64);
+            len -= 64;
+        }
+
+        if likely(len >= 32) {
+            let mut from_index_x8_1 = u64x8::from_u32_ptr(from_index);
+            let mut from_index_x8_2 = u64x8::from_u32_ptr(from_index.add(8));
+            let mut from_index_x8_3 = u64x8::from_u32_ptr(from_index.add(2 * 8));
+            let mut from_index_x8_4 = u64x8::from_u32_ptr(from_index.add(3 * 8));
+
+            from_index_x8_1.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            from_index_x8_2.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            from_index_x8_3.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            from_index_x8_4.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+
+            let buf_ptr_x8_1 = from_index_x8_1.add_u64(buffer_mem_start);
+            let buf_ptr_x8_2 = from_index_x8_2.add_u64(buffer_mem_start);
+            let buf_ptr_x8_3 = from_index_x8_3.add_u64(buffer_mem_start);
+            let buf_ptr_x8_4 = from_index_x8_4.add_u64(buffer_mem_start);
+
+            buf_ptr_x8_1.store(to_ptr as *mut u64);
+            buf_ptr_x8_2.store(to_ptr.add(8) as *mut u64);
+            buf_ptr_x8_3.store(to_ptr.add(2 * 8) as *mut u64);
+            buf_ptr_x8_4.store(to_ptr.add(3 * 8) as *mut u64);
+
+            to_ptr = to_ptr.add(32);
+            from_index = from_index.add(32);
+            len -= 32;
+        }
+
+        if likely(len >= 16) {
+            let mut from_index_x8_1 = u64x8::from_u32_ptr(from_index);
+            let mut from_index_x8_2 = u64x8::from_u32_ptr(from_index.add(8));
+
+            from_index_x8_1.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            from_index_x8_2.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+
+            let buf_ptr_x8_1 = from_index_x8_1.add_u64(buffer_mem_start);
+            let buf_ptr_x8_2 = from_index_x8_2.add_u64(buffer_mem_start);
+
+            buf_ptr_x8_1.store(to_ptr as *mut u64);
+            buf_ptr_x8_2.store(to_ptr.add(8) as *mut u64);
+
+            to_ptr = to_ptr.add(16);
+            from_index = from_index.add(16);
+            len -= 16;
+        }
+
+        if likely(len > 0) {
+            let mut from_index_x8 = u64x8::from_u32_ptr(from_index);
+            from_index_x8.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+            let buf_ptr_x8 = from_index_x8.add_u64(buffer_mem_start);
+            buf_ptr_x8.store(to_ptr as *mut u64);
+        }
+
+        to.set_len(from_indices.len());
     }
 
     /// Enqueues a slice of buffer indices to a next node
@@ -447,6 +643,53 @@ impl MainRef {
                 Ok(BufferWithContext::from_parts(buffer, self))
             } else {
                 Err(BufferAllocError)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use arrayvec::ArrayVec;
+
+    use crate::{
+        bindings::{vlib_buffer_main_t, vlib_buffer_t, vlib_main_t, CLIB_LOG2_CACHE_LINE_BYTES},
+        vlib::{node::FRAME_SIZE, MainRef},
+    };
+
+    #[test]
+    fn get_buffers() {
+        let buffer = vlib_buffer_t::default();
+        let buffers: [vlib_buffer_t; 65] = [buffer; 65];
+        let buffer_indices: ArrayVec<u32, 72> = (0..65)
+            .map(|n| {
+                n * (std::mem::size_of::<vlib_buffer_t>() as u32 >> CLIB_LOG2_CACHE_LINE_BYTES)
+            })
+            .collect();
+        let mut buffer_main = vlib_buffer_main_t {
+            buffer_mem_start: std::ptr::addr_of!(buffers) as u64,
+            buffer_mem_size: std::mem::size_of_val(&buffers) as u64,
+            ..vlib_buffer_main_t::default()
+        };
+        let mut main = vlib_main_t {
+            buffer_main: std::ptr::addr_of_mut!(buffer_main),
+            ..vlib_main_t::default()
+        };
+        // SAFETY: pointers used by MainRef::get_buffers are initialised correctly and valid for
+        // the duration of the call.
+        unsafe {
+            let mut to = ArrayVec::new();
+            let main_ref = MainRef::from_ptr_mut(std::ptr::addr_of_mut!(main));
+            main_ref.get_buffers::<(), FRAME_SIZE>(&buffer_indices, &mut to);
+            let expected: Vec<&vlib_buffer_t> = buffers.iter().collect();
+            assert_eq!(to.len(), expected.len());
+            for (i, buf_ref) in to.iter().enumerate() {
+                assert!(
+                    buf_ref.as_ptr().cast_const() == std::ptr::addr_of!(buffers[i]),
+                    "Buffer index {i} pointers don't match: {:p} expected {:p}",
+                    buf_ref.as_ptr(),
+                    std::ptr::addr_of!(buffers[i])
+                );
             }
         }
     }

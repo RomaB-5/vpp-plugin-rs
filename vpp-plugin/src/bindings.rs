@@ -62,6 +62,16 @@ pub struct vlib_buffer_t {
     pub bindgen_union_field: [u8; 256usize],
 }
 
+impl Default for vlib_buffer_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+
 // bindgen generates duplicate definitions for these types due to forward declarations in vnet/interface.h, so we blocklist them and declare them manually here
 
 #[repr(C)]

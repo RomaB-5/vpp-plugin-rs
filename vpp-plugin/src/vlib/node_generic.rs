@@ -3,6 +3,7 @@
 //! This module contains generic implementations of VPP nodes following set patterns that can be
 //! reused across different plugins.
 
+use core::slice;
 use std::mem::MaybeUninit;
 
 use arrayvec::ArrayVec;
@@ -86,7 +87,10 @@ where
     vm.buffer_enqueue_to_next(
         node,
         from,
-        std::mem::transmute::<&[MaybeUninit<u16>], &[u16]>(&nexts[..b.len()]),
+        std::mem::transmute::<&[MaybeUninit<u16>], &[u16]>(slice::from_raw_parts(
+            nexts.as_ptr(),
+            b.len(),
+        )),
     );
 
     b_len as u16

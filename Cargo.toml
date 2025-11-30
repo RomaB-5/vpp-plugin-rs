@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [ "vpp-example-plugin", "vpp-plugin", "vpp-plugin-api-gen", "vpp-plugin-macros"]
+members = [ "vpp-example-plugin", "vpp-plugin", "vpp-plugin-api-gen", "vpp-plugin-macros", "vpp-test-plugin" ]
 
 [profile.release]
 # Generate smaller code, essential for packet processing performance.

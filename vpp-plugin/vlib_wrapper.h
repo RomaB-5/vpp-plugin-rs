@@ -4,6 +4,7 @@
 #include <vnet/ip/format.h>
 #include <vnet/ip/ip4_packet.h>
 #include <vnet/ip/ip6_packet.h>
+#include <vnet/udp/udp_packet.h>
 #include <vlibapi/api.h>
 #include <vlibmemory/api.h>
 

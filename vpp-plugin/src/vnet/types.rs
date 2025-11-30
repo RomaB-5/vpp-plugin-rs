@@ -32,6 +32,12 @@ impl ip6_header_t {
     }
 }
 
+impl fmt::Debug for ip6_header_t {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <Self as fmt::Display>::fmt(self, f)
+    }
+}
+
 impl fmt::Display for ip6_header_t {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // SAFETY: vlib_helper_format_ip4_header returns a valid Vec representing a C string (on
@@ -124,6 +130,12 @@ impl FromStr for SwIfIndex {
         } else {
             Err(())
         }
+    }
+}
+
+impl fmt::Debug for ip4_header_t {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <Self as fmt::Display>::fmt(self, f)
     }
 }
 

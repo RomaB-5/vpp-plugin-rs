@@ -796,23 +796,23 @@ pub fn vlib_node(attributes: TokenStream, s: TokenStream) -> TokenStream {
                     format_trace: #format_trace,
                     runtime_data: #runtime_data,
                     runtime_data_bytes: {
-                        ::vpp_plugin::const_assert!(::std::mem::size_of::<<ExampleNode as ::vpp_plugin::vlib::node::Node>::RuntimeData>() <= u8::MAX as usize);
-                        ::vpp_plugin::const_assert!(::std::mem::align_of::<<ExampleNode as ::vpp_plugin::vlib::node::Node>::RuntimeData>() <= ::vpp_plugin::vlib::node::RUNTIME_DATA_ALIGN);
+                        ::vpp_plugin::const_assert!(::std::mem::size_of::<<#ident as ::vpp_plugin::vlib::node::Node>::RuntimeData>() <= u8::MAX as usize);
+                        ::vpp_plugin::const_assert!(::std::mem::align_of::<<#ident as ::vpp_plugin::vlib::node::Node>::RuntimeData>() <= ::vpp_plugin::vlib::node::RUNTIME_DATA_ALIGN);
                         ::std::mem::size_of::<<#ident as ::vpp_plugin::vlib::node::Node>::RuntimeData>() as u8
                     },
                     vector_size: {
-                        ::vpp_plugin::const_assert!(::std::mem::size_of::<<ExampleNode as ::vpp_plugin::vlib::node::Node>::Vector>() <= u8::MAX as usize);
-                        ::vpp_plugin::const_assert!(::std::mem::align_of::<<ExampleNode as ::vpp_plugin::vlib::node::Node>::Vector>() <= ::vpp_plugin::vlib::node::FRAME_DATA_ALIGN);
+                        ::vpp_plugin::const_assert!(::std::mem::size_of::<<#ident as ::vpp_plugin::vlib::node::Node>::Vector>() <= u8::MAX as usize);
+                        ::vpp_plugin::const_assert!(::std::mem::align_of::<<#ident as ::vpp_plugin::vlib::node::Node>::Vector>() <= ::vpp_plugin::vlib::node::FRAME_DATA_ALIGN);
                         ::std::mem::size_of::<<#ident as ::vpp_plugin::vlib::node::Node>::Vector>() as u8
                     },
                     aux_size: {
-                        ::vpp_plugin::const_assert!(::std::mem::size_of::<<ExampleNode as ::vpp_plugin::vlib::node::Node>::Aux>() <= u8::MAX as usize);
-                        ::vpp_plugin::const_assert!(::std::mem::align_of::<<ExampleNode as ::vpp_plugin::vlib::node::Node>::Aux>() <= ::vpp_plugin::vlib::node::FRAME_DATA_ALIGN);
+                        ::vpp_plugin::const_assert!(::std::mem::size_of::<<#ident as ::vpp_plugin::vlib::node::Node>::Aux>() <= u8::MAX as usize);
+                        ::vpp_plugin::const_assert!(::std::mem::align_of::<<#ident as ::vpp_plugin::vlib::node::Node>::Aux>() <= ::vpp_plugin::vlib::node::FRAME_DATA_ALIGN);
                         ::std::mem::size_of::<<#ident as ::vpp_plugin::vlib::node::Node>::Aux>() as u8
                     },
                     scalar_size: {
-                        ::vpp_plugin::const_assert!(::std::mem::size_of::<<ExampleNode as ::vpp_plugin::vlib::node::Node>::Scalar>() <= u16::MAX as usize);
-                        ::vpp_plugin::const_assert!(::std::mem::align_of::<<ExampleNode as ::vpp_plugin::vlib::node::Node>::Scalar>() <= ::vpp_plugin::vlib::node::FRAME_DATA_ALIGN);
+                        ::vpp_plugin::const_assert!(::std::mem::size_of::<<#ident as ::vpp_plugin::vlib::node::Node>::Scalar>() <= u16::MAX as usize);
+                        ::vpp_plugin::const_assert!(::std::mem::align_of::<<#ident as ::vpp_plugin::vlib::node::Node>::Scalar>() <= ::vpp_plugin::vlib::node::FRAME_DATA_ALIGN);
                         ::std::mem::size_of::<<#ident as ::vpp_plugin::vlib::node::Node>::Scalar>() as u16
                     },
                     n_errors: <<#ident as ::vpp_plugin::vlib::node::Node>::Errors as ::vpp_plugin::vlib::node::ErrorCounters>::C_DESCRIPTIONS.len()

@@ -449,18 +449,11 @@ impl<T> Vec<T> {
 
     /// Returns the allocated spare capacity as MaybeUninit slice (0-length for empty vectors)
     pub fn spare_capacity_mut(&mut self) -> &mut [MaybeUninit<T>] {
-        let len = self.len();
-        let cap = self.capacity();
-        if cap == len {
+        if self.as_ptr().is_null() {
             &mut []
         } else {
-            // SAFETY: memory for capacity elements is allocated
-            unsafe {
-                slice::from_raw_parts_mut(
-                    self.as_mut_ptr().add(len) as *mut MaybeUninit<T>,
-                    cap - len,
-                )
-            }
+            // SAFETY: pointer is non-null and points to a VPP vector
+            unsafe { VecRef::from_raw_mut(self.as_mut_ptr()).spare_capacity_mut() }
         }
     }
 
@@ -474,11 +467,8 @@ impl<T> Vec<T> {
             debug_assert_eq!(new_len, 0);
             return;
         }
-        debug_assert!(new_len <= self.capacity());
-        let hdr = self.as_vec_header_ptr();
-        let new_grow_elts = self.capacity() - new_len;
-        (*hdr).len = new_len as u32;
-        (*hdr).grow_elts = new_grow_elts.try_into().unwrap_or(u8::MAX);
+        // SAFETY: pointer is non-null and points to a VPP vector
+        unsafe { VecRef::from_raw_mut(self.as_mut_ptr()).set_len(new_len) }
     }
 
     /// Creates a `Vec<T>` directly from a pointer

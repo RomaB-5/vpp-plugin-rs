@@ -205,5 +205,9 @@ class IntegrationTestCase(VppTestCase):
         """VNET error being generated and returned from a CLI command"""
         self.cli_verify_response(f"rust-test negative vnet-error", "rust-test negative: Invalid value (Test)")
 
+    def test_message(self):
+        """Messages"""
+        self.cli_verify_no_response("rust-test message")
+
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

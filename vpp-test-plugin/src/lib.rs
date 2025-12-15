@@ -251,6 +251,53 @@ fn negative_test_command(
     }
 }
 
+#[vlib_cli_command(path = "rust-test message", short_help = "rust-test message")]
+fn message_test_command(
+    _vm: &mut vlib::BarrierHeldMainRef,
+    _input: &str,
+) -> Result<(), ErrorStack> {
+    // Test some basic operations not tested from the auto-generated API code
+    let mut message = vlibapi::Message::from(0u8);
+    if *message != 0 {
+        return Err(ErrorStack::msg(format!(
+            "Expected *message to be 0, but is {}",
+            *message
+        )));
+    }
+    *message = 1;
+    if *message != 1 {
+        return Err(ErrorStack::msg(format!(
+            "Expected *message to be 1, but is {}",
+            *message
+        )));
+    }
+
+    // Test functions for partial initialisation
+    let mut message = vlibapi::Message::<[u8; 256]>::new_uninit();
+    unsafe {
+        for i in 0..256 {
+            *(message.as_mut_ptr().add(i) as *mut u8) = 0;
+        }
+        let message = message.assume_init();
+        if *message != [0u8; 256] {
+            return Err(ErrorStack::msg(format!(
+                "Expected *message to be [0u8; 256], but is {:?}",
+                *message
+            )));
+        }
+    }
+    let message = vlibapi::Message::<u8>::new_uninit();
+    let message = message.write(0);
+    if *message != 0 {
+        return Err(ErrorStack::msg(format!(
+            "Expected *message to be 0, but is {}",
+            *message
+        )));
+    }
+
+    Ok(())
+}
+
 struct ApiHandler;
 
 impl test_api::Handlers for ApiHandler {

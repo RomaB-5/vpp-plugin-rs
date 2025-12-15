@@ -181,5 +181,29 @@ class IntegrationTestCase(VppTestCase):
         # Clean up
         self.enable_disable_api(self.pg0.sw_if_index, False)
 
+    def test_drop_using_runtime_data_cache(self):
+        """Drop using runtime data cache"""
+        err = self.statistics.get_err_counter("/err/test/Drop")
+        self.enable_disable_api(self.pg0.sw_if_index, True)
+
+        # Send two packets, one to prime the cache and the second to use the cache
+        packet = self.create_packet(4)
+        self.logger.info(ppp("Sending two packets of:", packet))
+        self.pg0.add_stream([packet, packet])
+        self.pg_start()
+
+        self.logger.debug(self.vapi.cli("show trace"))
+
+        # Expect the packet counters to have been incremented by two
+        new_err = self.statistics.get_err_counter("/err/test/Drop")
+        self.assertEqual(new_err, err + 2)
+
+        # Clean up
+        self.enable_disable_api(self.pg0.sw_if_index, False)
+
+    def test_vnet_error(self):
+        """VNET error being generated and returned from a CLI command"""
+        self.cli_verify_response(f"rust-test negative vnet-error", "rust-test negative: Invalid value (Test)")
+
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

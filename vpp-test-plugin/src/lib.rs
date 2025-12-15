@@ -1,17 +1,17 @@
 //! Test VPP plugin
 //!
 
-use std::{fmt, str::FromStr};
+use std::{fmt, ptr::NonNull, str::FromStr, sync::atomic::AtomicU64};
 
 use vpp_plugin::{
-    bindings::ip4_header_t,
+    bindings::{ip4_header_t, vnet_api_error_t_VNET_API_ERROR_INVALID_VALUE},
     vlib::{
         self,
         node_generic::{generic_feature_node_x1, FeatureNextNode, GenericFeatureNodeX1},
         BufferIndex,
     },
     vlib_cli_command, vlib_init_function, vlib_node, vlib_plugin_register, vlibapi,
-    vnet::types::SwIfIndex,
+    vnet::{error::VnetError, types::SwIfIndex},
     vnet_feature_init,
     vppinfra::{error::ErrorStack, unlikely},
     ErrorCounters, NextNodes,
@@ -70,11 +70,55 @@ enum TestErrorCounter {
     Drop,
 }
 
+#[derive(Copy, Clone)]
+struct TestRuntimeData {
+    drop_error_ptr: Option<NonNull<u64>>,
+}
+
+// SAFETY: this is safe to implement even though drop_error_ptr is thread-local because there are
+// no safe methods on TestRuntimeData, so accessing drop_error_ptr is unsafe anyway.
+unsafe impl Send for TestRuntimeData {}
+// SAFETY: this is safe to implement even though drop_error_ptr is thread-local because there are
+// no safe methods on TestRuntimeData, so accessing drop_error_ptr is unsafe anyway.
+unsafe impl Sync for TestRuntimeData {}
+
+/// Initialisation data used in node function init
+static TEST_RUNTIME_DATA_INIT: TestRuntimeData = TestRuntimeData {
+    drop_error_ptr: None,
+};
+
+/// Tests using runtime data by incrementing a drop counter, caching the pointer to it
+///
+/// This probably isn't better for performance and certainly isn't better for maintainability,
+/// so don't re-use this without profiling before and after.
+fn increment_drop_counter_cached(
+    vm: &vlib::MainRef,
+    node: &mut vlib::NodeRuntimeRef<TestNode>,
+    increment: u64,
+) {
+    unsafe {
+        let node_counter_base_index = (*node.node(vm).as_ptr()).error_heap_index;
+        let runtime_data = node.runtime_data_mut();
+        let ptr = runtime_data.drop_error_ptr.get_or_insert_with(|| {
+            let em = &(*vm.as_ptr()).error_main;
+            NonNull::new_unchecked(
+                em.counters
+                    .add(node_counter_base_index as usize + TestErrorCounter::Drop as usize),
+            )
+        });
+        AtomicU64::from_ptr(ptr.as_ptr()).store(
+            *ptr.as_ptr() + increment,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
+
 static TEST_NODE: TestNode = TestNode::new();
 
 #[vlib_node(
     name = "test",
     instance = TEST_NODE,
+    runtime_data_default = TEST_RUNTIME_DATA_INIT,
     format_trace = format_test_trace,
 )]
 struct TestNode;
@@ -91,7 +135,7 @@ impl vlib::node::Node for TestNode {
     type Aux = ();
 
     type NextNodes = TestNextNode;
-    type RuntimeData = ();
+    type RuntimeData = TestRuntimeData;
     type TraceData = TestTrace;
     type Errors = TestErrorCounter;
     type FeatureData = ();
@@ -124,6 +168,10 @@ impl vlib::node::Node for TestNode {
                     2 => FeatureNextNode::NextFeature,
                     3 => {
                         node.increment_error_counter(vm, TestErrorCounter::Drop, 1);
+                        TestNextNode::Drop.into()
+                    }
+                    4 => {
+                        increment_drop_counter_cached(vm, node, 1);
                         TestNextNode::Drop.into()
                     }
                     _ => {
@@ -186,6 +234,21 @@ fn enable_disable_command(
     }
 
     Ok(())
+}
+
+#[vlib_cli_command(
+    path = "rust-test negative",
+    short_help = "rust-test negative <vnet-error>"
+)]
+fn negative_test_command(
+    _vm: &mut vlib::BarrierHeldMainRef,
+    input: &str,
+) -> Result<(), ErrorStack> {
+    if input == "vnet-error" {
+        return Err(VnetError::from(vnet_api_error_t_VNET_API_ERROR_INVALID_VALUE).context("Test"));
+    } else {
+        return Err(ErrorStack::msg(format!("Unrecognised input {}", input)));
+    }
 }
 
 struct ApiHandler;

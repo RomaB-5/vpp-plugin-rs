@@ -59,7 +59,9 @@ use thiserror::Error;
 
 use crate::{
     json::generate_json,
-    parser::{ApiParser, Field, FieldSize, Message, Type, Union, VL_API_PREFIX, VL_API_SUFFIX},
+    parser::{
+        ApiParser, Enum, Field, FieldSize, Message, Type, Union, VL_API_PREFIX, VL_API_SUFFIX,
+    },
 };
 
 mod json;
@@ -361,17 +363,104 @@ impl ApiGenContext<'_> {
         Ok(())
     }
 
+    fn generate_enum(&mut self, e: &Enum) -> Result<(), Error> {
+        let upper_camel_name = to_upper_camel_case(&e.name);
+
+        // Since:
+        // 1. We don't parse the memory and instead cast the message pointer due to VPP API
+        //    restrictions (no length passed to message handler); and
+        // 2. In Rust it's UB to construct an instance of an enum that doesn't match one of its
+        //    variants;
+        // then we cannot use generate an enum type here. Instead, the best that can be done to
+        // help with type safety is to use a newtype wrapper around the primitive type.
+
+        writeln!(
+            self.output_file,
+            "#[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]",
+        )?;
+        writeln!(self.output_file, "#[repr(C)]")?;
+        writeln!(
+            self.output_file,
+            "pub struct {}(pub {});",
+            upper_camel_name, &e.size,
+        )?;
+
+        writeln!(self.output_file)?;
+
+        for variant in &e.variants {
+            writeln!(
+                self.output_file,
+                "pub const {}: {} = {}({});",
+                variant.id, upper_camel_name, upper_camel_name, variant.value,
+            )?;
+        }
+        if !e.variants.is_empty() {
+            writeln!(self.output_file)?;
+        }
+
+        writeln!(
+            self.output_file,
+            "impl ::std::fmt::Debug for {} {{",
+            upper_camel_name
+        )?;
+        writeln!(
+            self.output_file,
+            "    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {{"
+        )?;
+        writeln!(self.output_file, "        match *self {{")?;
+        for variant in &e.variants {
+            writeln!(
+                self.output_file,
+                "            {} => f.write_str(\"{}\"),",
+                variant.id, variant.id,
+            )?;
+        }
+        writeln!(self.output_file, "            _ => self.0.fmt(f),",)?;
+        writeln!(self.output_file, "        }}")?;
+        writeln!(self.output_file, "    }}")?;
+        writeln!(self.output_file, "}}")?;
+        writeln!(self.output_file)?;
+
+        writeln!(
+            self.output_file,
+            "impl ::vpp_plugin::vlibapi::EndianSwap for {} {{",
+            upper_camel_name
+        )?;
+        writeln!(
+            self.output_file,
+            "    fn endian_swap(&mut self, to_net: bool) {{",
+        )?;
+        // Suppress potential used variable warning
+        writeln!(self.output_file, "        let _ = to_net;",)?;
+        match e.size.as_str() {
+            "u8" => {
+                writeln!(self.output_file, "        // *self = Self(self.0) (no-op)",)?;
+            }
+            "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => {
+                writeln!(self.output_file, "        *self = Self(self.0.to_be());",)?;
+            }
+            _ => {
+                return Err(Error::Unimplemented(format!(
+                    "Unexpected size type {} for enum {}",
+                    e.size, e.name
+                )));
+            }
+        }
+        writeln!(self.output_file, "    }}",)?;
+        writeln!(self.output_file, "}}")?;
+        writeln!(self.output_file)?;
+
+        Ok(())
+    }
+
     fn generate_enums(&mut self) -> Result<(), Error> {
-        if let Some(e) = self.parser.enums().first() {
-            return Err(Error::Unimplemented(format!(
-                "Generating code for enums is not yet implemented (enum type {})",
-                e.name()
-            )));
+        for e in self.parser.enums() {
+            self.generate_enum(e)?;
         }
         if let Some(e) = self.parser.enumflags().first() {
             return Err(Error::Unimplemented(format!(
                 "Generating code for enumflags is not yet implemented (enumflag type {})",
-                e.name()
+                e.name
             )));
         }
         Ok(())
@@ -503,11 +592,18 @@ impl ApiGenContext<'_> {
                     )?;
                 }
                 _ => {
+                    // Copy out the value to a temporary since the structs are packed and so it
+                    // may not be properly aligned
                     writeln!(
                         self.output_file,
-                        "        ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut self.{}, to_net);",
+                        "        let mut tmp = self.{};",
                         field.name
                     )?;
+                    writeln!(
+                        self.output_file,
+                        "        ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut tmp, to_net);",
+                    )?;
+                    writeln!(self.output_file, "        self.{} = tmp;", field.name)?;
                 }
             }
         }

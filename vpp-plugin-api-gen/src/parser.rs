@@ -223,6 +223,31 @@ pub enum EnumStatement {
     },
 }
 
+fn enum_variants_from_block_statements(block_statements: &[EnumStatement]) -> Vec<EnumVariant> {
+    let mut next_value = 0;
+    block_statements
+        .iter()
+        .map(|s| match s {
+            EnumStatement::Variant {
+                id,
+                value: explicit_value,
+                ..
+            } => {
+                let value = if let Some(value) = explicit_value {
+                    *value
+                } else {
+                    next_value
+                };
+                next_value = value + 1;
+                EnumVariant {
+                    id: id.clone(),
+                    value,
+                }
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub struct Service {
     caller: String,
@@ -625,15 +650,9 @@ impl Type {
 
 #[derive(Debug)]
 pub struct Enum {
-    name: String,
-    _size: String,
-    _block_statements: Vec<EnumStatement>,
-}
-
-impl Enum {
-    pub fn name(&self) -> &str {
-        &self.name
-    }
+    pub name: String,
+    pub size: String,
+    pub variants: Vec<EnumVariant>,
 }
 
 #[derive(Debug)]
@@ -834,28 +853,7 @@ impl ApiParser {
                 } => {
                     let mut crc = crc32fast::Hasher::new();
                     crc.update(crc_data_for_enum_block_statements(block_statements).as_bytes());
-                    let mut next_value = 0;
-                    let variants: Vec<_> = block_statements
-                        .iter()
-                        .map(|s| match s {
-                            EnumStatement::Variant {
-                                id,
-                                value: explicit_value,
-                                ..
-                            } => {
-                                let value = if let Some(value) = explicit_value {
-                                    *value
-                                } else {
-                                    next_value
-                                };
-                                next_value = value + 1;
-                                EnumVariant {
-                                    id: id.clone(),
-                                    value,
-                                }
-                            }
-                        })
-                        .collect();
+                    let variants = enum_variants_from_block_statements(block_statements);
                     let details = if matches!(stmt, Statement::Enum { .. }) {
                         TypeDetails::Enum {
                             size: size.clone(),
@@ -1017,8 +1015,8 @@ impl ApiParser {
                 } => {
                     self.enums.push(Enum {
                         name,
-                        _size: size,
-                        _block_statements: block_statements,
+                        size,
+                        variants: enum_variants_from_block_statements(&block_statements),
                     });
                 }
                 Statement::EnumFlag {
@@ -1028,8 +1026,8 @@ impl ApiParser {
                 } => {
                     self.enumflags.push(Enum {
                         name,
-                        _size: size,
-                        _block_statements: block_statements,
+                        size,
+                        variants: enum_variants_from_block_statements(&block_statements),
                     });
                 }
             }

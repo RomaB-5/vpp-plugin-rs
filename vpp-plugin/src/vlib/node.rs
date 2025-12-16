@@ -485,3 +485,85 @@ pub trait Node {
         frame: &mut FrameRef<Self>,
     ) -> u16;
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        bindings::{vlib_error_desc_t, vlib_node_registration_t},
+        vlib::{self, node::NodeRegistration},
+    };
+
+    enum Errors {}
+    // SAFETY: C_DESCRIPTIONS is a valid array that matches number of discriminants in Errors enum
+    unsafe impl vlib::node::ErrorCounters for Errors {
+        type CDescriptionsArray = [vlib_error_desc_t; 0];
+
+        const C_DESCRIPTIONS: Self::CDescriptionsArray = [];
+
+        fn into_u16(self) -> u16 {
+            todo!()
+        }
+    }
+
+    #[derive(Copy, Clone)]
+    enum NextNodes {
+        _Drop,
+    }
+
+    // SAFETY: C_NAMES is a valid array that matches number of discriminants in NextNodes enum
+    unsafe impl vlib::node::NextNodes for NextNodes {
+        type CNamesArray = [*mut ::std::os::raw::c_char; 1];
+
+        const C_NAMES: Self::CNamesArray = [c"drop".as_ptr().cast_mut()];
+
+        fn into_u16(self) -> u16 {
+            self as u16
+        }
+    }
+
+    struct Node;
+    impl vlib::node::Node for Node {
+        type Vector = vlib::BufferIndex;
+        type Scalar = ();
+        type Aux = ();
+
+        type NextNodes = NextNodes;
+        type RuntimeData = ();
+        type TraceData = ();
+        type Errors = Errors;
+        type FeatureData = ();
+
+        unsafe fn function(
+            &self,
+            _vm: &mut vlib::MainRef,
+            _node: &mut vlib::NodeRuntimeRef<Self>,
+            _frame: &mut vlib::FrameRef<Self>,
+        ) -> u16 {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn test_node_reg() {
+        // NodeRegistration::new is a const function and Rust doesn't generate coverage data
+        // when such functions are evaluated at compile time
+        // (https://github.com/rust-lang/rust/issues/124732), so force it to be evaluated at
+        // runtime.
+        let node: NodeRegistration<Node, 0> =
+            std::hint::black_box(NodeRegistration::new(vlib_node_registration_t::default()));
+
+        let node = Box::new(node);
+        // Get a raw pointer so we can ignore the static lifetime requirement of register
+        let node = Box::into_raw(node);
+
+        // SAFETY: preconditions of register/unregister don't have to be met because we are
+        // calling this outside of the VPP application, meaning that pointers in the
+        // vlib_node_registration_t won't be dereferenced.
+        unsafe {
+            (*node).register();
+            (*node).unregister();
+
+            let _ = Box::from_raw(node);
+        }
+    }
+}

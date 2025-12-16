@@ -660,8 +660,8 @@ mod tests {
     #[test]
     fn get_buffers() {
         let buffer = vlib_buffer_t::default();
-        let buffers: [vlib_buffer_t; 65] = [buffer; 65];
-        let buffer_indices: ArrayVec<u32, 72> = (0..65)
+        let buffers = [buffer; 119];
+        let buffer_indices: ArrayVec<u32, 128> = (0..buffers.len() as u32)
             .map(|n| {
                 n * (std::mem::size_of::<vlib_buffer_t>() as u32 >> CLIB_LOG2_CACHE_LINE_BYTES)
             })

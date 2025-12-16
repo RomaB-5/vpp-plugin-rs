@@ -74,5 +74,7 @@ jobs:
           make install-dep
           make pkg-deb
           sudo dpkg -i build-root/*.deb
-      - name: Run tests
+      - name: Run unit tests
+        run: cargo test --workspace
+      - name: Run integration tests
         run: tests/run /tmp/build/vpp

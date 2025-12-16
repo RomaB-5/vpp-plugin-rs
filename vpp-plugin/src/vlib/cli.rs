@@ -64,3 +64,31 @@ unsafe impl Send for CommandRegistration {}
 // to this is the register/unregister methods, but it's the duty of the caller to ensure they are
 // called at times when no other threads have a reference to the object.
 unsafe impl Sync for CommandRegistration {}
+
+#[cfg(test)]
+mod tests {
+    use crate::{bindings::vlib_cli_command_t, vlib::cli::CommandRegistration};
+
+    #[test]
+    fn test_cmd_reg() {
+        // CommandRegistration::new is a const function and Rust doesn't generate coverage data
+        // when such functions are evaluated at compile time
+        // (https://github.com/rust-lang/rust/issues/124732), so force it to be evaluated at
+        // runtime.
+        let command = std::hint::black_box(CommandRegistration::new(vlib_cli_command_t::default()));
+
+        let command = Box::new(command);
+        // Get a raw pointer so we can ignore the static lifetime requirement of register
+        let command = Box::into_raw(command);
+
+        // SAFETY: preconditions of register/unregister don't have to be met because we are
+        // calling this outside of the VPP application, meaning that pointers in the
+        // vlib_cli_command_t won't be dereferenced.
+        unsafe {
+            (*command).register();
+            (*command).unregister();
+
+            let _ = Box::from_raw(command);
+        }
+    }
+}

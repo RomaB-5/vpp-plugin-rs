@@ -964,11 +964,11 @@ macro_rules! vec {
 
 #[cfg(test)]
 mod tests {
-    use crate::vppinfra::vec::SliceExt;
-    use crate::vppinfra::VecRef;
-    use crate::{vec, vppinfra::clib_mem_init};
-
-    use super::Vec;
+    use crate::vppinfra::{
+        clib_mem_init,
+        vec::{SliceExt, Vec},
+        VecRef,
+    };
 
     #[test]
     fn push_pop() {

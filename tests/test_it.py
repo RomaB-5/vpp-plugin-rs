@@ -220,6 +220,46 @@ class IntegrationTestCase(VppTestCase):
         # Clean up
         self.enable_disable_api(self.pg0.sw_if_index, False)
 
+    def test_node_combined_counter(self):
+        """Feature node incrementing combined counter"""
+        combined_count = self.statistics.get_counter("/net/test/combined")[0]
+        self.enable_disable_api(self.pg0.sw_if_index, True)
+
+        packet = self.create_packet(6)
+        self.logger.info(ppp("Sending packet:", packet))
+        self.pg0.add_stream(packet)
+        self.pg_start()
+
+        self.logger.debug(self.vapi.cli("show trace"))
+
+        self.logger.debug(self.vapi.cli("show buffers"))
+
+        # We only count the layer-3 packet size from an ip4-input feature
+        packet_len = len(packet[IP])
+        # Expect the combined counter to have been incremented by one packet and its size in bytes
+        new_combined_count = self.statistics.get_counter("/net/test/combined")[0]
+        self.assertEqual(new_combined_count[0]["packets"], combined_count[0]["packets"] + 1)
+        self.assertEqual(new_combined_count[0]["bytes"], combined_count[0]["bytes"] + packet_len)
+
+        # Now send a large packet that results in a chained buffer
+        combined_count = new_combined_count
+        packet = self.create_packet(6) / (3000 * "0")
+        self.logger.info(ppp("Sending packet:", packet))
+        self.pg0.add_stream(packet)
+        self.pg_start()
+
+        self.logger.debug(self.vapi.cli("show trace"))
+
+        # We only count the layer-3 packet size from an ip4-input feature
+        packet_len = len(packet[IP])
+        # Expect the combined counter to have been incremented by one packet and its size in bytes
+        new_combined_count = self.statistics.get_counter("/net/test/combined")[0]
+        self.assertEqual(new_combined_count[0]["packets"], combined_count[0]["packets"] + 1)
+        self.assertEqual(new_combined_count[0]["bytes"], combined_count[0]["bytes"] + packet_len)
+
+        # Clean up
+        self.enable_disable_api(self.pg0.sw_if_index, False)
+
     def test_vnet_error(self):
         """VNET error being generated and returned from a CLI command"""
         self.cli_verify_response(f"rust-test negative vnet-error", "rust-test negative: Invalid value (Test)")
@@ -231,6 +271,7 @@ class IntegrationTestCase(VppTestCase):
     def test_counters(self):
         """Counters"""
         self.cli_verify_no_response(f"rust-test counter simple")
+        self.cli_verify_no_response(f"rust-test counter combined")
 
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

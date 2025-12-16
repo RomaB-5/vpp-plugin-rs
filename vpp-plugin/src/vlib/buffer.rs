@@ -18,6 +18,7 @@ use crate::{
         VLIB_BUFFER_NEXT_PRESENT, VLIB_BUFFER_PRE_DATA_SIZE, VLIB_BUFFER_TOTAL_LENGTH_VALID,
     },
     vlib::{
+        self,
         node::{ErrorCounters, Node, NodeRuntimeRef, VectorBufferIndex},
         MainRef,
     },
@@ -294,6 +295,35 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe {
             let error_value = (*node.as_ptr()).errors.add(error.into_u16() as usize);
             self.as_metadata_mut().error = *error_value;
+        }
+    }
+
+    /// Get the total length of the buffer chain not including the first buffer
+    #[inline(always)]
+    pub fn total_length_not_including_first_buffer(&self) -> u32 {
+        debug_assert!(self.flags().contains(BufferFlags::TOTAL_LENGTH_VALID));
+        self.as_details().total_length_not_including_first_buffer
+    }
+
+    /// Get the total length of the buffer chain from the current offset
+    ///
+    /// Note that this doesn't take into account any bytes that have been [`Self::advance()`]d
+    /// over.
+    #[inline(always)]
+    pub fn length_in_chain(&self, vm: &vlib::MainRef) -> u64 {
+        let len = self.current_length();
+
+        if likely(!self.flags().contains(BufferFlags::NEXT_PRESENT)) {
+            return len as u64;
+        }
+
+        if likely(self.flags().contains(BufferFlags::TOTAL_LENGTH_VALID)) {
+            return len as u64 + self.total_length_not_including_first_buffer() as u64;
+        }
+
+        // SAFETY: The buffer pointer is valid and the function is called in a valid context.
+        unsafe {
+            crate::bindings::vlib_buffer_length_in_chain_slow_path(vm.as_ptr(), self.as_ptr())
         }
     }
 }

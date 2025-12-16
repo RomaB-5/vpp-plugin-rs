@@ -8,7 +8,7 @@ use vpp_plugin::{
     bindings::{ip4_header_t, vnet_api_error_t_VNET_API_ERROR_INVALID_VALUE},
     vlib::{
         self,
-        counter::{SimpleCounter, SimpleCounterIndex},
+        counter::{CombinedCounter, CombinedCounterIndex, SimpleCounter, SimpleCounterIndex},
         node_generic::{generic_feature_node_x1, FeatureNextNode, GenericFeatureNodeX1},
         BufferIndex,
     },
@@ -120,6 +120,8 @@ static TEST_NODE: TestNode = TestNode::new();
 lazy_static! {
     static ref SIMPLE_COUNTER: SimpleCounter =
         SimpleCounter::new("test-simple", "/net/test/simple");
+    static ref COMBINED_COUNTER: CombinedCounter =
+        CombinedCounter::new("test-combined", "/net/test/combined");
 }
 
 #[vlib_node(
@@ -183,6 +185,14 @@ impl vlib::node::Node for TestNode {
                     }
                     5 => {
                         SimpleCounterIndex::from_parts(&SIMPLE_COUNTER, 0).increment(vm, 1);
+                        FeatureNextNode::NextFeature
+                    }
+                    6 => {
+                        CombinedCounterIndex::from_parts(&COMBINED_COUNTER, 0).increment(
+                            vm,
+                            1,
+                            b0.length_in_chain(vm),
+                        );
                         FeatureNextNode::NextFeature
                     }
                     _ => {
@@ -337,6 +347,29 @@ fn counter_test_command(vm: &mut vlib::BarrierHeldMainRef, input: &str) -> Resul
                 counter_val
             )));
         }
+    } else if input == "combined" {
+        let counter = CombinedCounter::new("ut-combined", "/net/ut/combined");
+        let counter_index = counter.allocate_index(vm, 0);
+        let (counter_ref, index) = counter_index.into_parts();
+        let counter_index = unsafe { CombinedCounterIndex::from_parts(counter_ref, index) };
+        counter_index.increment(vm, 1, 64); // Increment by 1 packet and 64 bytes
+        let counter_val = counter_index.get(vm);
+        if counter_val.packets != 1 || counter_val.bytes != 64 {
+            return Err(ErrorStack::msg(format!(
+                "Expected counter value to be (1, 64) instead of ({}, {})",
+                counter_val.packets, counter_val.bytes
+            )));
+        }
+        unsafe {
+            counter_index.zero();
+        }
+        let counter_val = counter_index.get(vm);
+        if counter_val.packets != 0 || counter_val.bytes != 0 {
+            return Err(ErrorStack::msg(format!(
+                "Expected counter value to be (0, 0) instead of ({}, {})",
+                counter_val.packets, counter_val.bytes
+            )));
+        }
     } else {
         return Err(ErrorStack::msg(format!("Unrecognised input {}", input)));
     }
@@ -371,6 +404,7 @@ impl test_api::Handlers for ApiHandler {
 fn test_init(vm: &mut vlib::BarrierHeldMainRef) -> Result<(), ErrorStack> {
     test_api::test_register_messages::<ApiHandler>();
     SIMPLE_COUNTER.allocate_index(vm, 0);
+    COMBINED_COUNTER.allocate_index(vm, 0);
 
     Ok(())
 }

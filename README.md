@@ -29,7 +29,6 @@ Patches are required to be applied to VPP in order to build and use VPP plugins 
 ## Short term goals
 
 - Implement known unimplemented items in API code generator
-- Counters
 - Process nodes using async Rust
 
 ## Longer term goals

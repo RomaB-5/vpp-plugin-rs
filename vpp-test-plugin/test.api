@@ -1,5 +1,10 @@
 option version = "1.0.0";
 
+enum test_node_type {
+  TEST_NODE_TYPE_X1,
+  TEST_NODE_TYPE_X4,
+};
+
 /**
  * @brief Enable/disable test node on a given interface
  * @param enable - Zero to disable, non-zero to enable
@@ -11,4 +16,5 @@ autoreply autoendian define test_enable_disable
   u32 context;
   bool enable;
   u32 sw_if_index;
+  vl_api_test_node_type_t node_type;
 };

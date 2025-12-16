@@ -14,6 +14,7 @@ from asfframework import (
 )
 from util import ppp
 from vpp_papi_provider import CliFailedCommandError
+from vpp_papi import VppEnum
 
 
 @tag_run_solo
@@ -112,12 +113,21 @@ class IntegrationTestCase(VppTestCase):
         new_err = self.statistics.get_err_counter("/err/test/Drop")
         self.assertEqual(new_err, err)
 
-    def enable_disable_api(self, sw_if_index, enable):
+    def enable_disable_api(self, sw_if_index, enable, node_type = "x1"):
+
+        test_node_type = VppEnum.vl_api_test_node_type_t
+        if node_type == "x1":
+            api_node_type = test_node_type.TEST_NODE_TYPE_X1
+        elif node_type == "x4":
+            api_node_type = test_node_type.TEST_NODE_TYPE_X4
+        else:
+            raise Exception(f"Invalid node type: {node_type}")
         self.vapi.api(
             self.vapi.papi.test_enable_disable,
             {
                 'sw_if_index': sw_if_index,
-                'enable': enable
+                'enable': enable,
+                'node_type': api_node_type,
             },
         )
 
@@ -259,6 +269,81 @@ class IntegrationTestCase(VppTestCase):
 
         # Clean up
         self.enable_disable_api(self.pg0.sw_if_index, False)
+
+    def test_node_x4(self):
+        """Node processing 4 buffers at a time"""
+        err = self.statistics.get_err_counter("/err/testx4/Drop")
+        self.enable_disable_api(self.pg0.sw_if_index, True, node_type="x4")
+
+        packet = self.create_packet(1)
+        self.logger.info(ppp("Sending packet:", packet))
+        # Send full frame of 256 packets to validate that corner case
+        self.pg0.add_stream(256 * packet)
+        self.pg_start()
+
+        self.logger.debug(self.vapi.cli("show trace"))
+
+        # Expect the packet counter to have been incremented by 256
+        new_err = self.statistics.get_err_counter("/err/testx4/Drop")
+        self.assertEqual(new_err, err + 256)
+
+        # Now send frame of just one packet to validate that corner case
+        err = new_err
+        self.pg0.add_stream(packet)
+        self.pg_start()
+
+        # Expect the packet counter to have been incremented by 1
+        new_err = self.statistics.get_err_counter("/err/testx4/Drop")
+        self.assertEqual(new_err, err + 1)
+
+        # Now disable and expect the packet counter to not be incremented
+        err = new_err
+        self.enable_disable_api(self.pg0.sw_if_index, False, node_type="x4")
+
+        packet = self.create_packet(1)
+        self.logger.info(ppp("Sending packet:", packet))
+        self.pg0.add_stream(packet)
+        self.pg_start()
+
+        new_err = self.statistics.get_err_counter("/err/testx4/Drop")
+        self.assertEqual(new_err, err)
+
+    def test_node_x4_next_feature(self):
+        """Node processing 4 buffers at a time, forward to next feature"""
+        self.enable_disable_api(self.pg0.sw_if_index, True, node_type="x4")
+
+        packet = self.create_packet(2)
+        self.logger.info(ppp("Sending packet:", packet))
+        # Send full frame of 256 packets to validate that corner case
+        self.send_and_expect(self.pg0, 256 * packet, self.pg1)
+
+        # Now send frame of just one packet to validate that corner case
+        self.send_and_expect(self.pg0, packet, self.pg1)
+
+        self.logger.debug(self.vapi.cli("show trace"))
+
+        # Clean up
+        self.enable_disable_api(self.pg0.sw_if_index, False, node_type="x4")
+
+    def test_node_x4_mixed_next(self):
+        """Node processing 4 buffers at a time, mixed next nodes"""
+        err = self.statistics.get_err_counter("/err/testx4/Drop")
+        self.enable_disable_api(self.pg0.sw_if_index, True, node_type="x4")
+
+        packet1 = self.create_packet(1)
+        packet2 = self.create_packet(2)
+        # Send frame of 4 packets resulting in interleaved mixed next nodes
+        self.pg0.add_stream([packet1, packet2, packet1, packet2])
+        self.pg_start()
+
+        self.logger.debug(self.vapi.cli("show trace"))
+
+        # Expect the packet counter to have been incremented by 2
+        new_err = self.statistics.get_err_counter("/err/testx4/Drop")
+        self.assertEqual(new_err, err + 2)
+
+        # Clean up
+        self.enable_disable_api(self.pg0.sw_if_index, False, node_type="x4")
 
     def test_vnet_error(self):
         """VNET error being generated and returned from a CLI command"""

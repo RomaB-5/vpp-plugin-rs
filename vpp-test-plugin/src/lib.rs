@@ -9,17 +9,23 @@ use vpp_plugin::{
     vlib::{
         self,
         counter::{CombinedCounter, CombinedCounterIndex, SimpleCounter, SimpleCounterIndex},
-        node_generic::{generic_feature_node_x1, FeatureNextNode, GenericFeatureNodeX1},
+        node_generic::{
+            generic_feature_node_x1, generic_feature_node_x4, FeatureNextNode,
+            GenericFeatureNodeX1, GenericFeatureNodeX4,
+        },
         BufferIndex,
     },
     vlib_cli_command, vlib_init_function, vlib_node, vlib_plugin_register, vlibapi,
-    vnet::{error::VnetError, types::SwIfIndex},
+    vnet::{
+        error::{VnetError, VNET_ERR_INVALID_ARGUMENT},
+        types::SwIfIndex,
+    },
     vnet_feature_init,
     vppinfra::{error::ErrorStack, unlikely},
     ErrorCounters, NextNodes,
 };
 
-use crate::test_api::TestEnableDisableReply;
+use crate::test_api::{TestEnableDisableReply, TEST_NODE_TYPE_X1, TEST_NODE_TYPE_X4};
 
 mod test_api {
     include!(concat!(env!("OUT_DIR"), "/src/test_api.rs"));
@@ -55,6 +61,14 @@ impl fmt::Display for TestTrace {
 fn format_test_trace(
     _vm: &mut vlib::MainRef,
     _node: &mut vlib::NodeRef<TestNode>,
+    t: &TestTrace,
+) -> String {
+    t.to_string()
+}
+
+fn format_test_trace2(
+    _vm: &mut vlib::MainRef,
+    _node: &mut vlib::NodeRef<TestX4Node>,
     t: &TestTrace,
 ) -> String {
     t.to_string()
@@ -217,6 +231,118 @@ vnet_feature_init! {
     identifier: TEST_FEAT,
     arc_name: "ip4-unicast",
     node: TestNode,
+}
+
+static TESTX4_NODE: TestX4Node = TestX4Node::new();
+
+#[vlib_node(
+    name = "testx4",
+    instance = TESTX4_NODE,
+    format_trace = format_test_trace2,
+)]
+struct TestX4Node;
+
+impl TestX4Node {
+    const fn new() -> Self {
+        Self
+    }
+}
+
+impl vlib::node::Node for TestX4Node {
+    type Vector = BufferIndex;
+    type Scalar = ();
+    type Aux = ();
+
+    type NextNodes = TestNextNode;
+    type RuntimeData = ();
+    type TraceData = TestTrace;
+    type Errors = TestErrorCounter;
+    type FeatureData = ();
+
+    #[inline(always)]
+    unsafe fn function(
+        &self,
+        vm: &mut vlib::MainRef,
+        node: &mut vlib::NodeRuntimeRef<Self>,
+        frame: &mut vlib::FrameRef<Self>,
+    ) -> u16 {
+        struct Impl;
+
+        impl GenericFeatureNodeX4<TestX4Node> for Impl {
+            fn prefetch_buffer_x4(
+                &self,
+                _vm: &vlib::MainRef,
+                _node: &mut vlib::NodeRuntimeRef<TestX4Node>,
+                b: &mut [&mut vlib::BufferRef<<TestX4Node as vlib::node::Node>::FeatureData>; 4],
+            ) {
+                b.iter().for_each(|b0| {
+                    b0.prefetch_header_load();
+                    b0.prefetch_data_load();
+                });
+            }
+
+            #[inline(always)]
+            unsafe fn map_buffer_to_next_x4(
+                &self,
+                vm: &vlib::MainRef,
+                node: &mut vlib::NodeRuntimeRef<TestX4Node>,
+                b: &mut [&mut vlib::BufferRef<()>; 4],
+            ) -> [FeatureNextNode<TestNextNode>; 4] {
+                [
+                    self.map_buffer_to_next(vm, node, b[0]),
+                    self.map_buffer_to_next(vm, node, b[1]),
+                    self.map_buffer_to_next(vm, node, b[2]),
+                    self.map_buffer_to_next(vm, node, b[3]),
+                ]
+            }
+
+            unsafe fn trace_buffer(
+                &self,
+                vm: &vlib::MainRef,
+                node: &mut vlib::NodeRuntimeRef<TestX4Node>,
+                b0: &mut vlib::BufferRef<<TestX4Node as vlib::node::Node>::FeatureData>,
+            ) {
+                let ip_udp = b0.current_ptr_mut() as *const IpUdpHeader;
+                if usize::from(b0.current_length()) >= std::mem::size_of::<IpUdpHeader>() {
+                    let t = b0.add_trace(vm, node);
+                    t.write(TestTrace { header: *ip_udp });
+                }
+            }
+        }
+
+        impl GenericFeatureNodeX1<TestX4Node> for Impl {
+            #[inline(always)]
+            unsafe fn map_buffer_to_next(
+                &self,
+                _vm: &vlib::MainRef,
+                node: &mut vlib::NodeRuntimeRef<TestX4Node>,
+                b0: &mut vlib::BufferRef<()>,
+            ) -> FeatureNextNode<TestNextNode> {
+                if usize::from(b0.current_length()) < std::mem::size_of::<IpUdpHeader>() {
+                    b0.set_error(node, TestErrorCounter::Drop);
+                    return TestNextNode::Drop.into();
+                }
+
+                let ip_udp: *const IpUdpHeader = b0.current_ptr_mut() as *const IpUdpHeader;
+
+                match u16::from_be((*ip_udp).udp.dst_port) {
+                    1 => {
+                        b0.set_error(node, TestErrorCounter::Drop);
+                        TestNextNode::Drop.into()
+                    }
+                    _ => FeatureNextNode::NextFeature,
+                }
+            }
+        }
+
+        generic_feature_node_x4(vm, node, frame, Impl)
+    }
+}
+
+vnet_feature_init! {
+    identifier: TESTX4_FEAT,
+    arc_name: "ip4-unicast",
+    node: TestX4Node,
 }
 
 #[vlib_cli_command(
@@ -386,10 +512,22 @@ impl test_api::Handlers for ApiHandler {
     ) -> Result<vlibapi::Message<test_api::TestEnableDisableReply>, i32> {
         let sw_if_index = SwIfIndex::new(mp.sw_if_index);
 
-        if mp.enable {
-            TEST_FEAT.enable(vm, sw_if_index, ())?;
-        } else {
-            TEST_FEAT.disable(vm, sw_if_index)?;
+        match mp.node_type {
+            TEST_NODE_TYPE_X1 => {
+                if mp.enable {
+                    TEST_FEAT.enable(vm, sw_if_index, ())?;
+                } else {
+                    TEST_FEAT.disable(vm, sw_if_index)?;
+                }
+            }
+            TEST_NODE_TYPE_X4 => {
+                if mp.enable {
+                    TESTX4_FEAT.enable(vm, sw_if_index, ())?;
+                } else {
+                    TESTX4_FEAT.disable(vm, sw_if_index)?;
+                }
+            }
+            _ => return Err(VNET_ERR_INVALID_ARGUMENT.into()),
         }
 
         Ok(TestEnableDisableReply {

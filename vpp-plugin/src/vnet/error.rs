@@ -41,3 +41,6 @@ impl From<VnetError> for i32 {
         value.0
     }
 }
+
+/// Invalid Argument
+pub const VNET_ERR_INVALID_ARGUMENT: VnetError = VnetError(-73);

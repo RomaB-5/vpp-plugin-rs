@@ -6,15 +6,20 @@
 use std::{cell::UnsafeCell, sync::atomic::AtomicU64};
 
 use arrayvec::ArrayVec;
+use bitflags::bitflags;
 
 use crate::{
     bindings::{
         _vlib_node_registration, vlib_error_desc_t, vlib_frame_t, vlib_helper_get_global_main,
         vlib_helper_remove_node_from_registrations, vlib_node_fn_registration_t,
-        vlib_node_registration_t, vlib_node_runtime_t, vlib_node_t,
+        vlib_node_registration_t, vlib_node_runtime_t, vlib_node_t, VLIB_NODE_FLAG_ADAPTIVE_MODE,
+        VLIB_NODE_FLAG_ALLOW_LAZY_NEXT_NODES, VLIB_NODE_FLAG_FRAME_NO_FREE_AFTER_DISPATCH,
+        VLIB_NODE_FLAG_IS_DROP, VLIB_NODE_FLAG_IS_HANDOFF, VLIB_NODE_FLAG_IS_OUTPUT,
+        VLIB_NODE_FLAG_IS_PUNT, VLIB_NODE_FLAG_SWITCH_FROM_INTERRUPT_TO_POLLING_MODE,
+        VLIB_NODE_FLAG_SWITCH_FROM_POLLING_TO_INTERRUPT_MODE, VLIB_NODE_FLAG_TRACE,
+        VLIB_NODE_FLAG_TRACE_SUPPORTED,
     },
-    vlib::buffer::BufferRef,
-    vlib::MainRef,
+    vlib::{buffer::BufferRef, MainRef},
 };
 
 /// Max number of vector elements to process at once per node
@@ -184,6 +189,37 @@ impl<N: Node, const N_NEXT_NODES: usize> NodeRegistration<N, N_NEXT_NODES> {
     }
 }
 
+bitflags! {
+    /// Node flags
+    #[repr(transparent)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct NodeFlags: u16 {
+        /// Don't free the frame after dispatch - processing function keeps the frame
+        const FRAME_NO_FREE_AFTER_DISPATCH = VLIB_NODE_FLAG_FRAME_NO_FREE_AFTER_DISPATCH as u16;
+        /// Internal node counts as output node for stats purposes
+        const IS_OUTPUT = VLIB_NODE_FLAG_IS_OUTPUT as u16;
+        /// Internal node counts as drop node for stats purposes
+        const IS_DROP = VLIB_NODE_FLAG_IS_DROP as u16;
+        /// Internal node counts as punt node for stats purposes
+        const IS_PUNT = VLIB_NODE_FLAG_IS_PUNT as u16;
+        /// Internal node counts as handoff node for stats purposes
+        const IS_HANDOFF = VLIB_NODE_FLAG_IS_HANDOFF as u16;
+        /// Current node runtime has traced vectors
+        const TRACE = VLIB_NODE_FLAG_TRACE as u16;
+        /// The node is in the process of switching from interrupt to polling mode
+        const SWITCH_FROM_INTERRUPT_TO_POLLING_MODE = VLIB_NODE_FLAG_SWITCH_FROM_INTERRUPT_TO_POLLING_MODE as u16;
+        /// The node is in the process of switching from polling to interrupt mode
+        const SWITCH_FROM_POLLING_TO_INTERRUPT_MODE = VLIB_NODE_FLAG_SWITCH_FROM_POLLING_TO_INTERRUPT_MODE as u16;
+        /// The node can initiate a per-node packet trace
+        const TRACE_SUPPORTED = VLIB_NODE_FLAG_TRACE_SUPPORTED as u16;
+        /// The node supports automatic switching between interrupt and polling mode
+        const ADAPTIVE_MODE =  VLIB_NODE_FLAG_ADAPTIVE_MODE as u16;
+        /// Allows the node registration to refer to a next node that doesn't exist at
+        /// registration time
+        const ALLOW_LAZY_NEXT_NODES =  VLIB_NODE_FLAG_ALLOW_LAZY_NEXT_NODES as u16;
+    }
+}
+
 // SAFETY: there is nothing in vlib_node_registration that is tied to a specific thread or that
 // mutates global state, so it's safe to send between threads.
 unsafe impl<N: Node, const N_NEXT_NODES: usize> Send for NodeRegistration<N, N_NEXT_NODES> {}
@@ -263,6 +299,13 @@ impl<N: Node> NodeRuntimeRef<N> {
     pub fn increment_error_counter(&self, vm: &MainRef, counter: N::Errors, increment: u64) {
         self.node(vm)
             .increment_error_counter(vm, counter, increment)
+    }
+
+    /// Node flags
+    #[inline(always)]
+    pub fn flags(&self) -> NodeFlags {
+        // SAFETY: we have a valid pointer to vlib_node_runtime_t
+        unsafe { NodeFlags::from_bits_truncate((*self.as_ptr()).flags) }
     }
 }
 

@@ -11,4 +11,4 @@ pub mod node_generic;
 
 pub use buffer::{BufferFlags, BufferIndex, BufferRef};
 pub use main::{BarrierHeldMainRef, MainRef};
-pub use node::{FrameRef, NodeRef, NodeRuntimeRef};
+pub use node::{FrameRef, NodeFlags, NodeRef, NodeRuntimeRef};

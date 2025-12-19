@@ -937,6 +937,8 @@ __impl_slice_eq! { [] Vec<T>, &mut [U] }
 __impl_slice_eq! { [] Vec<T>, [U] }
 __impl_slice_eq! { [const N: usize] VecRef<T>, [U; N] }
 __impl_slice_eq! { [const N: usize] VecRef<T>, &[U; N] }
+__impl_slice_eq! { [const N: usize] Vec<T>, [U; N] }
+__impl_slice_eq! { [const N: usize] Vec<T>, &[U; N] }
 
 // SAFETY: it's fine to deallocate the memory from another thread, and fine to access Vec<T> from
 // another thread as long as T is Send
@@ -1011,10 +1013,19 @@ mod tests {
 
         let mut v: Vec<u32> = Vec::new();
         v.extend(&[1, 2, 3]);
-        assert_eq!(v.len(), 3);
-        assert_eq!(v[0], 1);
-        assert_eq!(v[1], 2);
-        assert_eq!(v[2], 3);
+        assert_eq!(v, [1, 2, 3]);
+
+        let mut v = vec![1u32];
+        v.extend([2, 3].as_slice());
+        assert_eq!(v, [1, 2, 3]);
+
+        let mut v = Vec::new();
+        v.extend([1u32, 2, 3]);
+        assert_eq!(v, [1, 2, 3]);
+
+        let mut v = vec![1u32];
+        v.extend([2, 3]);
+        assert_eq!(v, [1, 2, 3]);
     }
 
     #[test]

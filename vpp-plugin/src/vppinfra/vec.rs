@@ -43,6 +43,7 @@ use std::{
     borrow::{Borrow, BorrowMut},
     cmp::Ordering,
     fmt,
+    iter::FromIterator,
     mem::{ManuallyDrop, MaybeUninit},
     ops::{Deref, DerefMut},
     ptr, slice,
@@ -880,6 +881,149 @@ impl<T: Ord> Ord for Vec<T> {
     }
 }
 
+impl<T> FromIterator<T> for Vec<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+        let (lower_size, upper_size) = iter.size_hint();
+        let size = upper_size.unwrap_or(lower_size);
+        let mut vec = Vec::with_capacity(size);
+        for item in iter {
+            vec.push(item);
+        }
+        vec
+    }
+}
+
+impl<T> IntoIterator for Vec<T> {
+    type Item = T;
+    type IntoIter = IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let ptr = self.0;
+        let len = self.len();
+        // Prevent the Vec's Drop from running
+        std::mem::forget(self);
+        let end_ptr = if len == 0 {
+            ptr
+        } else {
+            // SAFETY: ptr is a valid pointer to the start of the allocated vector,
+            // and len is the number of initialized elements, so ptr.add(len) is within bounds.
+            unsafe { ptr.add(len) }
+        };
+        IntoIter {
+            start_ptr: ptr,
+            ptr,
+            end_ptr,
+            len,
+        }
+    }
+}
+
+/// An iterator that moves out of a vector.
+///
+/// This `struct` is created by the `into_iter` method on [`Vec`](struct.Vec.html)
+/// (provided by the [`IntoIterator`] trait).
+pub struct IntoIter<T> {
+    start_ptr: *mut T,
+    ptr: *mut T,
+    end_ptr: *mut T,
+    len: usize,
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
+        if self.len == 0 {
+            None
+        } else {
+            // SAFETY: len > 0 ensures ptr points to a valid, initialized element.
+            // Reading moves the value out, then ptr is advanced and len decremented.
+            unsafe {
+                let item = ptr::read(self.ptr);
+                self.ptr = self.ptr.add(1);
+                self.len -= 1;
+                Some(item)
+            }
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIter<T> {
+    fn next_back(&mut self) -> Option<T> {
+        if self.len == 0 {
+            None
+        } else {
+            // SAFETY: len > 0 ensures end_ptr points to a valid, initialized element.
+            // Decrement end_ptr to point to the last element, read it, then decrement len.
+            unsafe {
+                self.end_ptr = self.end_ptr.sub(1);
+                let item = ptr::read(self.end_ptr);
+                self.len -= 1;
+                Some(item)
+            }
+        }
+    }
+}
+
+impl<T> ExactSizeIterator for IntoIter<T> {}
+
+impl<T> std::iter::FusedIterator for IntoIter<T> {}
+
+impl<T> Default for IntoIter<T> {
+    fn default() -> Self {
+        IntoIter {
+            start_ptr: std::ptr::null_mut(),
+            ptr: std::ptr::null_mut(),
+            end_ptr: std::ptr::null_mut(),
+            len: 0,
+        }
+    }
+}
+
+impl<T: Clone> Clone for IntoIter<T> {
+    fn clone(&self) -> Self {
+        if self.len == 0 {
+            return IntoIter::default();
+        }
+        // Create a new Vec with cloned remaining elements
+        let mut new_vec = Vec::with_capacity(self.len);
+        // SAFETY: self.ptr points to valid memory, and i < self.len ensures
+        // ptr.add(i) is within the initialized remaining elements.
+        unsafe {
+            for i in 0..self.len {
+                let item = ptr::read(self.ptr.add(i));
+                new_vec.push(item.clone());
+            }
+        }
+        new_vec.into_iter()
+    }
+}
+
+impl<T> Drop for IntoIter<T> {
+    fn drop(&mut self) {
+        if self.len > 0 {
+            // SAFETY: self.ptr points to the start of len initialized elements that need to be
+            // dropped.
+            unsafe {
+                let slice = slice::from_raw_parts_mut(self.ptr, self.len);
+                ptr::drop_in_place(slice);
+            }
+        }
+        if !self.start_ptr.is_null() {
+            // SAFETY: since self.start_ptr isn't null it's the original allocation pointer from
+            // VPP's allocator.
+            unsafe {
+                vec_free_not_inline(self.start_ptr.cast());
+            }
+        }
+    }
+}
+
 /// Extension trait for slices to convert to VPP vectors
 pub trait SliceExt<T> {
     /// Converts the slice to a VPP vector by cloning each element
@@ -968,7 +1112,7 @@ macro_rules! vec {
 mod tests {
     use crate::vppinfra::{
         clib_mem_init,
-        vec::{SliceExt, Vec},
+        vec::{IntoIter, SliceExt, Vec},
         VecRef,
     };
 
@@ -1194,5 +1338,73 @@ mod tests {
         // SAFETY: passing a null pointer to the function is documented as allowed
         let v = unsafe { VecRef::from_raw_mut_opt(std::ptr::null_mut::<u8>()) };
         assert_eq!(v, None);
+    }
+
+    #[test]
+    fn test_from_iterator() {
+        clib_mem_init();
+
+        let data = vec![1, 2, 3, 4, 5];
+        let v: Vec<_> = data.into_iter().collect();
+        assert_eq!(v.as_slice(), &[1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_into_iter() {
+        clib_mem_init();
+
+        let data = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let mut iter = data.into_iter();
+        assert_eq!(iter.next().as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn test_into_iter_default() {
+        clib_mem_init();
+
+        let mut iter: IntoIter<i32> = Default::default();
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.len(), 0);
+    }
+
+    #[test]
+    fn test_into_iter_clone() {
+        clib_mem_init();
+
+        let v = vec![1, 2, 3, 4, 5];
+        let mut iter1 = v.into_iter();
+        assert_eq!(iter1.next(), Some(1));
+
+        let mut iter2 = iter1.clone();
+
+        assert_eq!(iter1.next(), Some(2));
+        assert_eq!(iter2.next(), Some(2));
+
+        assert_eq!(iter1.next(), Some(3));
+        assert_eq!(iter2.next(), Some(3));
+
+        assert_eq!(iter1.collect::<Vec<_>>(), vec![4, 5]);
+        assert_eq!(iter2.collect::<Vec<_>>(), vec![4, 5]);
+
+        let mut iter1: IntoIter<i32> = IntoIter::default();
+        let mut iter2 = iter1.clone();
+        assert_eq!(iter2.next(), None);
+        assert_eq!(iter1.next(), None);
+    }
+
+    #[test]
+    fn test_into_iter_double_ended() {
+        clib_mem_init();
+
+        let v = vec![1, 2, 3, 4, 5];
+        let mut iter = v.into_iter();
+
+        assert_eq!(iter.next(), Some(1));
+        assert_eq!(iter.next_back(), Some(5));
+        assert_eq!(iter.next(), Some(2));
+        assert_eq!(iter.next_back(), Some(4));
+        assert_eq!(iter.next(), Some(3));
+        assert_eq!(iter.next_back(), None);
+        assert_eq!(iter.next(), None);
     }
 }

@@ -547,11 +547,88 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn auto_reply(&self) -> bool {
+    fn new(
+        name: String,
+        options: Vec<OptionStatement>,
+        fields: Vec<Field>,
+        flags: Vec<Flag>,
+        crc: u32,
+        comment: Option<String>,
+    ) -> Self {
+        let implicit_fields = [Field {
+            r#type: "u16".to_string(),
+            name: "_vl_msg_id".to_string(),
+            options: vec![],
+            size: None,
+        }];
+        let fields = implicit_fields.into_iter().chain(fields).collect();
+
+        Self {
+            name,
+            options,
+            fields,
+            flags,
+            crc,
+            comment,
+        }
+    }
+
+    fn generated_reply(&self) -> Option<Self> {
+        let auto_reply = self.auto_reply();
+        let index_reply = self.index_reply();
+
+        if auto_reply || index_reply {
+            let mut auto_fields = vec![
+                Field {
+                    r#type: "u16".to_string(),
+                    name: "_vl_msg_id".to_string(),
+                    options: vec![],
+                    size: None,
+                },
+                Field {
+                    r#type: "u32".to_string(),
+                    name: "context".to_string(),
+                    options: vec![],
+                    size: None,
+                },
+                Field {
+                    r#type: "i32".to_string(),
+                    name: "retval".to_string(),
+                    options: vec![],
+                    size: None,
+                },
+            ];
+            if !auto_reply {
+                auto_fields.push(Field {
+                    r#type: "u32".to_string(),
+                    name: "index".to_string(),
+                    options: vec![],
+                    size: None,
+                });
+            }
+
+            let mut crc_hash = crc32fast::Hasher::new();
+            // crc doesn't include _vl_msg_id field
+            let crc_data = crc_data_for_fields(&auto_fields[1..]);
+            crc_hash.update(crc_data.as_bytes());
+            Some(Self {
+                name: format!("{}_reply", self.name),
+                options: self.options.clone(),
+                fields: auto_fields,
+                flags: Default::default(),
+                crc: crc_hash.finalize(),
+                comment: None,
+            })
+        } else {
+            None
+        }
+    }
+
+    fn auto_reply(&self) -> bool {
         self.flags.contains(&Flag::AutoReply)
     }
 
-    pub fn index_reply(&self) -> bool {
+    fn index_reply(&self) -> bool {
         self.flags.contains(&Flag::IndexReply)
     }
 
@@ -692,9 +769,9 @@ impl ApiParser {
 
         me.do_imports(&statements)?;
         // Side effect: register types
-        me.type_entries_from_statements(&statements)?;
+        let file_crc = me.process_statements(statements, false)?;
 
-        me.process(statements)?;
+        me.process(file_crc)?;
 
         Ok(me)
     }
@@ -708,7 +785,7 @@ impl ApiParser {
             let imported_statements = parse_file(import_filename)?;
             self.do_imports(&imported_statements)?;
 
-            self.type_entries_from_statements(&imported_statements)?;
+            self.process_statements(imported_statements, true)?;
         }
 
         Ok(())
@@ -779,65 +856,117 @@ impl ApiParser {
         Ok(vla)
     }
 
-    fn type_entries_from_statements(
+    /// Process statements
+    ///
+    /// Returns file CRC.
+    fn process_statements(
         &mut self,
-        statements: &[Statement],
-    ) -> Result<Vec<(String, Arc<TypeEntry>)>, Error> {
-        let mut types = vec![];
+        statements: Vec<Statement>,
+        import: bool,
+    ) -> Result<u32, Error> {
+        let mut file_crc = crc32fast::Hasher::new();
+
         for stmt in statements {
+            if let Some(crc_data) = stmt.crc_data() {
+                file_crc.update(crc_data.as_bytes());
+            }
             let (name, t) = match stmt {
-                Statement::Define { name, fields, .. } => {
-                    self.validate_vla(name, fields, false)?;
+                Statement::Define {
+                    name,
+                    options,
+                    fields,
+                    flags,
+                    comment,
+                } => {
+                    self.validate_vla(&name, &fields, false)?;
+                    if !import {
+                        let crc = self.crc_for_fields(&fields, false)?;
+                        let define =
+                            Message::new(name, options, fields, flags, crc.finalize(), comment);
+                        let reply = define.generated_reply();
+                        self.messages.push(define);
+                        if let Some(reply) = reply {
+                            self.messages.push(reply);
+                        }
+                    }
                     continue;
                 }
-                Statement::TypedefBlock { name, fields, .. } => {
-                    let vla = self.validate_vla(name, fields, false)?;
-                    let crc = self.crc_for_fields(fields, false)?;
+                Statement::TypedefBlock {
+                    name,
+                    options,
+                    fields,
+                    flags,
+                } => {
+                    let vla = self.validate_vla(&name, &fields, false)?;
+                    let crc = self.crc_for_fields(&fields, false)?;
+                    if !import {
+                        let un = Type {
+                            name: name.clone(),
+                            _options: options,
+                            fields: fields.clone(),
+                            flags,
+                        };
+                        self.types.push(un);
+                    }
                     (
-                        name.clone(),
+                        name,
                         TypeEntry {
                             crc,
                             vla,
-                            details: TypeDetails::TypedefBlock {
-                                fields: fields.clone(),
-                            },
+                            details: TypeDetails::TypedefBlock { fields },
                         },
                     )
                 }
                 Statement::Typedef { field, .. } => {
                     let mut crc = crc32fast::Hasher::new();
                     if let Some(FieldSize::Variable(Some(length_var))) = &field.size {
-                        return Err(Error::ArrayVariableNotFound(
-                            field.name.clone(),
-                            length_var.clone(),
-                        ));
+                        return Err(Error::ArrayVariableNotFound(field.name, length_var.clone()));
                     }
                     // As per vppapigen.py
                     crc.update("[]".as_bytes());
+
+                    if !import {
+                        self.aliases.push(field.clone());
+                    }
+
                     (
                         field.name.clone(),
                         TypeEntry {
                             crc,
                             vla: field.vla(),
                             details: TypeDetails::Typedef {
-                                r#type: field.r#type.clone(),
-                                size: field.size.clone(),
+                                r#type: field.r#type,
+                                size: field.size,
                             },
                         },
                     )
                 }
-                Statement::Union { name, fields, .. } => {
-                    self.validate_vla(name, fields, true)?;
-                    let crc = self.crc_for_fields(fields, false)?;
+                Statement::Union {
+                    name,
+                    options,
+                    fields,
+                    comment,
+                } => {
+                    self.validate_vla(&name, &fields, true)?;
+                    let crc = self.crc_for_fields(&fields, false)?;
+
+                    if !import {
+                        let un = Union {
+                            name: name.clone(),
+                            _options: options,
+                            fields: fields.clone(),
+                            comment,
+                        };
+                        self.unions.push(un);
+                    }
+
                     (
-                        name.clone(),
+                        name,
                         TypeEntry {
                             crc,
                             // validate_vla ensures this
                             vla: false,
-                            details: TypeDetails::Union {
-                                fields: fields.clone(),
-                            },
+                            details: TypeDetails::Union { fields },
                         },
                     )
                 }
@@ -845,28 +974,20 @@ impl ApiParser {
                     name,
                     size,
                     block_statements,
-                }
-                | Statement::EnumFlag {
-                    name,
-                    size,
-                    block_statements,
                 } => {
                     let mut crc = crc32fast::Hasher::new();
-                    crc.update(crc_data_for_enum_block_statements(block_statements).as_bytes());
-                    let variants = enum_variants_from_block_statements(block_statements);
-                    let details = if matches!(stmt, Statement::Enum { .. }) {
-                        TypeDetails::Enum {
+                    crc.update(crc_data_for_enum_block_statements(&block_statements).as_bytes());
+                    let variants = enum_variants_from_block_statements(&block_statements);
+                    if !import {
+                        self.enums.push(Enum {
+                            name: name.clone(),
                             size: size.clone(),
-                            variants,
-                        }
-                    } else {
-                        TypeDetails::EnumFlag {
-                            size: size.clone(),
-                            variants,
-                        }
-                    };
+                            variants: variants.clone(),
+                        });
+                    }
+                    let details = TypeDetails::Enum { size, variants };
                     (
-                        name.clone(),
+                        name,
                         TypeEntry {
                             crc,
                             vla: false,
@@ -874,10 +995,51 @@ impl ApiParser {
                         },
                     )
                 }
-                Statement::Option(_) | Statement::Import(_) | Statement::Service(_) => continue,
+                Statement::EnumFlag {
+                    name,
+                    size,
+                    block_statements,
+                } => {
+                    let mut crc = crc32fast::Hasher::new();
+                    crc.update(crc_data_for_enum_block_statements(&block_statements).as_bytes());
+                    let variants = enum_variants_from_block_statements(&block_statements);
+                    if !import {
+                        self.enumflags.push(Enum {
+                            name: name.clone(),
+                            size: size.clone(),
+                            variants: variants.clone(),
+                        });
+                    }
+                    let details = TypeDetails::EnumFlag { size, variants };
+                    (
+                        name,
+                        TypeEntry {
+                            crc,
+                            vla: false,
+                            details,
+                        },
+                    )
+                }
+                Statement::Import(import_file) => {
+                    if !import {
+                        self.imports.push(import_file);
+                    }
+                    continue;
+                }
+                Statement::Option(option) => {
+                    if !import {
+                        self.options.push(option);
+                    }
+                    continue;
+                }
+                Statement::Service(services) => {
+                    if !import {
+                        self.services.extend(services);
+                    }
+                    continue;
+                }
             };
             let type_entry = Arc::new(t);
-            types.push((name.clone(), type_entry.clone()));
 
             if self
                 .global_types_by_name
@@ -887,152 +1049,10 @@ impl ApiParser {
                 return Err(Error::TypeRedefinition { type_name: name });
             }
         }
-        Ok(types)
+        Ok(file_crc.finalize())
     }
 
-    fn process(&mut self, statements: Vec<Statement>) -> Result<(), Error> {
-        let mut file_crc = crc32fast::Hasher::new();
-
-        for stmt in statements {
-            if let Some(crc_data) = stmt.crc_data() {
-                file_crc.update(crc_data.as_bytes());
-            }
-
-            match stmt {
-                Statement::Define {
-                    name,
-                    options,
-                    fields,
-                    flags,
-                    comment,
-                } => {
-                    let crc = self.crc_for_fields(&fields, false)?;
-
-                    let implicit_fields = [Field {
-                        r#type: "u16".to_string(),
-                        name: "_vl_msg_id".to_string(),
-                        options: vec![],
-                        size: None,
-                    }];
-                    let fields = implicit_fields
-                        .into_iter()
-                        .chain(fields.into_iter())
-                        .collect();
-
-                    let define = Message {
-                        name: name.clone(),
-                        options: options.clone(),
-                        fields,
-                        flags,
-                        crc: crc.finalize(),
-                        comment,
-                    };
-                    let auto_reply = define.auto_reply();
-                    let index_reply = define.index_reply();
-                    self.messages.push(define);
-
-                    if auto_reply || index_reply {
-                        let mut auto_fields = vec![
-                            Field {
-                                r#type: "u16".to_string(),
-                                name: "_vl_msg_id".to_string(),
-                                options: vec![],
-                                size: None,
-                            },
-                            Field {
-                                r#type: "u32".to_string(),
-                                name: "context".to_string(),
-                                options: vec![],
-                                size: None,
-                            },
-                            Field {
-                                r#type: "i32".to_string(),
-                                name: "retval".to_string(),
-                                options: vec![],
-                                size: None,
-                            },
-                        ];
-                        if !auto_reply {
-                            auto_fields.push(Field {
-                                r#type: "u32".to_string(),
-                                name: "index".to_string(),
-                                options: vec![],
-                                size: None,
-                            });
-                        }
-
-                        // crc doesn't include _vl_msg_id field
-                        let crc = self.crc_for_fields(&auto_fields[1..], false)?;
-                        let define = Message {
-                            name: format!("{}_reply", name),
-                            options,
-                            fields: auto_fields,
-                            flags: Default::default(),
-                            crc: crc.finalize(),
-                            comment: None,
-                        };
-                        self.messages.push(define);
-                    }
-                }
-                Statement::Typedef { field, .. } => self.aliases.push(field),
-                Statement::TypedefBlock {
-                    name,
-                    options,
-                    fields,
-                    flags,
-                } => {
-                    let un = Type {
-                        name: name.clone(),
-                        _options: options.clone(),
-                        fields,
-                        flags,
-                    };
-                    self.types.push(un);
-                }
-                Statement::Union {
-                    name,
-                    options,
-                    fields,
-                    comment,
-                } => {
-                    let un = Union {
-                        name: name.clone(),
-                        _options: options.clone(),
-                        fields,
-                        comment,
-                    };
-                    self.unions.push(un);
-                }
-                Statement::Service(services) => {
-                    self.services.extend(services.iter().cloned());
-                }
-                Statement::Import(import) => self.imports.push(import),
-                Statement::Option(option) => self.options.push(option),
-                Statement::Enum {
-                    name,
-                    size,
-                    block_statements,
-                } => {
-                    self.enums.push(Enum {
-                        name,
-                        size,
-                        variants: enum_variants_from_block_statements(&block_statements),
-                    });
-                }
-                Statement::EnumFlag {
-                    name,
-                    size,
-                    block_statements,
-                } => {
-                    self.enumflags.push(Enum {
-                        name,
-                        size,
-                        variants: enum_variants_from_block_statements(&block_statements),
-                    });
-                }
-            }
-        }
-
+    fn process(&mut self, file_crc: u32) -> Result<(), Error> {
         let messages_unordered: HashSet<_> = self
             .messages
             .iter()
@@ -1157,7 +1177,7 @@ impl ApiParser {
             }
         }
 
-        self.file_crc = file_crc.finalize();
+        self.file_crc = file_crc;
 
         Ok(())
     }

@@ -700,6 +700,7 @@ pub struct Type {
     fields: Vec<Field>,
     _options: Vec<OptionStatement>,
     flags: Vec<Flag>,
+    vla: bool,
 }
 
 impl Type {
@@ -722,6 +723,10 @@ impl Type {
 
     pub fn manual_endian(&self) -> bool {
         self.flags.contains(&Flag::ManualPrint)
+    }
+
+    pub fn vla(&self) -> bool {
+        self.vla
     }
 }
 
@@ -905,6 +910,7 @@ impl ApiParser {
                             _options: options,
                             fields: fields.clone(),
                             flags,
+                            vla,
                         };
                         self.types.push(un);
                     }

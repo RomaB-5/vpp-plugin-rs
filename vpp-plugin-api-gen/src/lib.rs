@@ -639,20 +639,12 @@ impl ApiGenContext<'_> {
         if !t.manual_endian() {
             self.generate_endian_swap(t.name(), t.fields())?;
         }
-        writeln!(
-            self.output_file,
-            "unsafe extern \"C\" fn vl_api_{}_t_calc_size(_a: *mut {}) -> ::vpp_plugin::bindings::uword {{",
-            t.name(),
-            upper_camel_name
-        )?;
-        // TODO: variable array types
-        writeln!(
-            self.output_file,
-            "    std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
-            upper_camel_name
-        )?;
-        writeln!(self.output_file, "}}")?;
-        writeln!(self.output_file)?;
+        if t.vla() {
+            return Err(Error::Unimplemented(format!(
+                "VLA for type {} not implemented",
+                t.name()
+            )));
+        }
         Ok(())
     }
 

@@ -369,5 +369,20 @@ class IntegrationTestCase(VppTestCase):
             },
         )
 
+    def test_array_in_message(self):
+        """API with arrays in message"""
+        test_node_type = VppEnum.vl_api_test_node_type_t
+        self.vapi.api(
+            self.vapi.papi.test_array,
+            {
+                'array1': [42, 0xdeadbeef, 0, 0xffffffff],
+                'array2': {
+                    'array': [42, 0xffff],
+                },
+                'array3': [test_node_type.TEST_NODE_TYPE_X1, test_node_type.TEST_NODE_TYPE_X4],
+                'array4': [0.0, 42.0],
+            },
+        )
+
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

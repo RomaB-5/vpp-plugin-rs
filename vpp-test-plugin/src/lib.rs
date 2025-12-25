@@ -550,6 +550,32 @@ impl test_api::Handlers for ApiHandler {
         }
         .into())
     }
+
+    fn test_array(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestArray,
+    ) -> Result<vlibapi::Message<test_api::TestArrayReply>, i32> {
+        let array = mp.array1;
+        if array != [42, 0xdeadbeef, 0, 0xffffffff] {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        let array = mp.array2.array;
+        if array != [42, 0xffff] {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        let array = mp.array3;
+        if array != [TEST_NODE_TYPE_X1, TEST_NODE_TYPE_X4] {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        if mp.array4[0] != 0.0 || mp.array4[1] != 42.0 {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        Ok(test_api::TestArrayReply {
+            context: mp.context,
+            ..Default::default()
+        }
+        .into())
+    }
 }
 
 #[vlib_init_function]

@@ -230,13 +230,32 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "#[repr(C, packed)]")?;
         writeln!(self.output_file, "pub struct {} {{", upper_camel_name)?;
         for field in message.fields() {
-            // TODO: array types
-            writeln!(
-                self.output_file,
-                "    pub {}: {},",
-                field.name,
-                to_rust_type(&field.r#type)?
-            )?;
+            match &field.size {
+                Some(FieldSize::Fixed(size)) => {
+                    writeln!(
+                        self.output_file,
+                        "    pub {}: [{}; {}],",
+                        field.name,
+                        to_rust_type(&field.r#type)?,
+                        size,
+                    )?;
+                }
+                Some(FieldSize::Variable(_)) => {
+                    return Err(Error::Unimplemented(format!(
+                        "VLA for field {} in message {} not implemented",
+                        field.name,
+                        message.name()
+                    )));
+                }
+                None => {
+                    writeln!(
+                        self.output_file,
+                        "    pub {}: {},",
+                        field.name,
+                        to_rust_type(&field.r#type)?,
+                    )?;
+                }
+            };
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
@@ -480,13 +499,32 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "#[repr(C, packed)]")?;
         writeln!(self.output_file, "pub union {} {{", upper_camel_name)?;
         for field in un.fields() {
-            // TODO: array types
-            writeln!(
-                self.output_file,
-                "    pub {}: {},",
-                field.name,
-                to_rust_type(&field.r#type)?
-            )?;
+            match &field.size {
+                Some(FieldSize::Fixed(size)) => {
+                    writeln!(
+                        self.output_file,
+                        "    pub {}: [{}; {}],",
+                        field.name,
+                        to_rust_type(&field.r#type)?,
+                        size,
+                    )?;
+                }
+                Some(FieldSize::Variable(_)) => {
+                    return Err(Error::Unimplemented(format!(
+                        "VLA for field {} in union {} not implemented",
+                        field.name,
+                        un.name()
+                    )));
+                }
+                None => {
+                    writeln!(
+                        self.output_file,
+                        "    pub {}: {},",
+                        field.name,
+                        to_rust_type(&field.r#type)?,
+                    )?;
+                }
+            };
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
@@ -497,7 +535,6 @@ impl ApiGenContext<'_> {
             upper_camel_name
         )?;
         for field in un.fields() {
-            // TODO: array types
             match field.r#type.as_str() {
                 "u8" | "string" | "bool" => {
                     writeln!(
@@ -506,13 +543,31 @@ impl ApiGenContext<'_> {
                         field.name, field.name
                     )?;
                 }
-                "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => {
-                    writeln!(
-                        self.output_file,
-                        "    (*a).{} = (*a).{}.to_be();",
-                        field.name, field.name
-                    )?;
-                }
+                "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => match field.size {
+                    Some(FieldSize::Fixed(size)) => {
+                        writeln!(self.output_file, "    for i in 0..{} {{", size)?;
+                        writeln!(
+                            self.output_file,
+                            "        (*a).{}[i] = (*a).{}[i].to_be();",
+                            field.name, field.name
+                        )?;
+                        writeln!(self.output_file, "    }}",)?;
+                    }
+                    Some(FieldSize::Variable(_)) => {
+                        return Err(Error::Unimplemented(format!(
+                            "VLA field {} for union {} not implemented",
+                            field.name,
+                            un.name()
+                        )));
+                    }
+                    None => {
+                        writeln!(
+                            self.output_file,
+                            "    (*a).{} = (*a).{}.to_be();",
+                            field.name, field.name
+                        )?;
+                    }
+                },
                 "f64" => {
                     writeln!(
                         self.output_file,
@@ -568,7 +623,6 @@ impl ApiGenContext<'_> {
         // Suppress potential used variable warning
         writeln!(self.output_file, "        let _ = to_net;",)?;
         for field in fields {
-            // TODO: array types
             match field.r#type.as_str() {
                 "u8" | "string" | "bool" => {
                     writeln!(
@@ -577,34 +631,96 @@ impl ApiGenContext<'_> {
                         field.name, field.name
                     )?;
                 }
-                "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => {
-                    writeln!(
-                        self.output_file,
-                        "        self.{} = self.{}.to_be();",
-                        field.name, field.name
-                    )?;
-                }
-                "f64" => {
-                    writeln!(
-                        self.output_file,
-                        "        self.{} = f64::from_be_bytes(self.{}.to_be_bytes());",
-                        field.name, field.name
-                    )?;
-                }
-                _ => {
-                    // Copy out the value to a temporary since the structs are packed and so it
-                    // may not be properly aligned
-                    writeln!(
-                        self.output_file,
-                        "        let mut tmp = self.{};",
-                        field.name
-                    )?;
-                    writeln!(
-                        self.output_file,
-                        "        ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut tmp, to_net);",
-                    )?;
-                    writeln!(self.output_file, "        self.{} = tmp;", field.name)?;
-                }
+                "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => match field.size {
+                    Some(FieldSize::Fixed(size)) => {
+                        writeln!(self.output_file, "        for i in 0..{} {{", size)?;
+                        writeln!(
+                            self.output_file,
+                            "            self.{}[i] = self.{}[i].to_be();",
+                            field.name, field.name
+                        )?;
+                        writeln!(self.output_file, "        }}",)?;
+                    }
+                    Some(FieldSize::Variable(_)) => {
+                        return Err(Error::Unimplemented(format!(
+                            "VLA field {} for type {} not implemented",
+                            field.name, name
+                        )));
+                    }
+                    None => {
+                        writeln!(
+                            self.output_file,
+                            "        self.{} = self.{}.to_be();",
+                            field.name, field.name
+                        )?;
+                    }
+                },
+                "f64" => match field.size {
+                    Some(FieldSize::Fixed(size)) => {
+                        writeln!(self.output_file, "        for i in 0..{} {{", size)?;
+                        writeln!(
+                            self.output_file,
+                            "            self.{}[i] = f64::from_be_bytes(self.{}[i].to_be_bytes());",
+                            field.name, field.name
+                        )?;
+                        writeln!(self.output_file, "        }}",)?;
+                    }
+                    Some(FieldSize::Variable(_)) => {
+                        return Err(Error::Unimplemented(format!(
+                            "VLA field {} for type {} not implemented",
+                            field.name, name
+                        )));
+                    }
+                    None => {
+                        writeln!(
+                            self.output_file,
+                            "        self.{} = f64::from_be_bytes(self.{}.to_be_bytes());",
+                            field.name, field.name
+                        )?;
+                    }
+                },
+                _ => match field.size {
+                    Some(FieldSize::Fixed(size)) => {
+                        writeln!(self.output_file, "        for i in 0..{} {{", size)?;
+                        // Copy out the value to a temporary since the structs are packed and so it
+                        // may not be properly aligned
+                        writeln!(
+                            self.output_file,
+                            "            let mut tmp = self.{}[i];",
+                            field.name
+                        )?;
+                        writeln!(
+                            self.output_file,
+                            "            ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut tmp, to_net);",
+                        )?;
+                        writeln!(
+                            self.output_file,
+                            "            self.{}[i] = tmp;",
+                            field.name
+                        )?;
+                        writeln!(self.output_file, "        }}",)?;
+                    }
+                    Some(FieldSize::Variable(_)) => {
+                        return Err(Error::Unimplemented(format!(
+                            "VLA field {} for type {} not implemented",
+                            field.name, name
+                        )));
+                    }
+                    None => {
+                        // Copy out the value to a temporary since the structs are packed and so it
+                        // may not be properly aligned
+                        writeln!(
+                            self.output_file,
+                            "        let mut tmp = self.{};",
+                            field.name
+                        )?;
+                        writeln!(
+                            self.output_file,
+                            "        ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut tmp, to_net);",
+                        )?;
+                        writeln!(self.output_file, "        self.{} = tmp;", field.name)?;
+                    }
+                },
             }
         }
         writeln!(self.output_file, "    }}",)?;
@@ -626,13 +742,32 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "#[repr(C, packed)]")?;
         writeln!(self.output_file, "pub struct {} {{", upper_camel_name)?;
         for field in t.fields() {
-            // TODO: array types
-            writeln!(
-                self.output_file,
-                "    pub {}: {},",
-                field.name,
-                to_rust_type(&field.r#type)?
-            )?;
+            match &field.size {
+                Some(FieldSize::Fixed(size)) => {
+                    writeln!(
+                        self.output_file,
+                        "    pub {}: [{}; {}],",
+                        field.name,
+                        to_rust_type(&field.r#type)?,
+                        size,
+                    )?;
+                }
+                Some(FieldSize::Variable(_)) => {
+                    return Err(Error::Unimplemented(format!(
+                        "VLA for field {} in struct {} not implemented",
+                        field.name,
+                        t.name()
+                    )));
+                }
+                None => {
+                    writeln!(
+                        self.output_file,
+                        "    pub {}: {},",
+                        field.name,
+                        to_rust_type(&field.r#type)?,
+                    )?;
+                }
+            };
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;

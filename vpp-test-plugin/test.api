@@ -29,3 +29,17 @@ autoreply autoendian define test_type_in_message
   u32 context;
   vl_api_test_type_t test_type;
 };
+
+typedef test_array_type {
+  u16 array[2];
+};
+
+autoreply autoendian define test_array
+{
+  u32 client_index;
+  u32 context;
+  u32 array1[4];
+  vl_api_test_array_type_t array2;
+  vl_api_test_node_type_t array3[2];
+  f64 array4[2];
+};

@@ -18,3 +18,14 @@ autoreply autoendian define test_enable_disable
   u32 sw_if_index;
   vl_api_test_node_type_t node_type;
 };
+
+typedef test_type {
+  u32 field1;
+};
+
+autoreply autoendian define test_type_in_message
+{
+  u32 client_index;
+  u32 context;
+  vl_api_test_type_t test_type;
+};

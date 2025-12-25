@@ -25,7 +25,7 @@ use vpp_plugin::{
     ErrorCounters, NextNodes,
 };
 
-use crate::test_api::{TestEnableDisableReply, TEST_NODE_TYPE_X1, TEST_NODE_TYPE_X4};
+use crate::test_api::{TEST_NODE_TYPE_X1, TEST_NODE_TYPE_X4};
 
 mod test_api {
     include!(concat!(env!("OUT_DIR"), "/src/test_api.rs"));
@@ -530,7 +530,21 @@ impl test_api::Handlers for ApiHandler {
             _ => return Err(VNET_ERR_INVALID_ARGUMENT.into()),
         }
 
-        Ok(TestEnableDisableReply {
+        Ok(test_api::TestEnableDisableReply {
+            context: mp.context,
+            ..Default::default()
+        }
+        .into())
+    }
+
+    fn test_type_in_message(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestTypeInMessage,
+    ) -> Result<vlibapi::Message<test_api::TestTypeInMessageReply>, i32> {
+        if mp.test_type.field1 != 42 {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        Ok(test_api::TestTypeInMessageReply {
             context: mp.context,
             ..Default::default()
         }

@@ -358,5 +358,16 @@ class IntegrationTestCase(VppTestCase):
         self.cli_verify_no_response(f"rust-test counter simple")
         self.cli_verify_no_response(f"rust-test counter combined")
 
+    def test_type_in_message(self):
+        """API with type nested in message"""
+        self.vapi.api(
+            self.vapi.papi.test_type_in_message,
+            {
+                'test_type': {
+                    'field1': 42,
+                },
+            },
+        )
+
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

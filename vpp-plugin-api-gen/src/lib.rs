@@ -60,7 +60,8 @@ use thiserror::Error;
 use crate::{
     json::generate_json,
     parser::{
-        ApiParser, Enum, Field, FieldSize, Message, Type, Union, VL_API_PREFIX, VL_API_SUFFIX,
+        Alias, ApiParser, Enum, Field, FieldSize, Message, Type, Union, VL_API_PREFIX,
+        VL_API_SUFFIX,
     },
 };
 
@@ -198,6 +199,11 @@ impl Builder {
     }
 }
 
+enum EndianSwapInput<'a> {
+    Fields(&'a [Field]),
+    Alias(&'a Field),
+}
+
 /// Helper structure for API code generation
 ///
 /// Mark parser as non-mutable to avoid borrow-check errors when passing references obtained from
@@ -288,7 +294,7 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
 
-        self.generate_endian_swap(message.name(), message.fields())?;
+        self.generate_endian_swap(message.name(), EndianSwapInput::Fields(message.fields()))?;
 
         writeln!(
             self.output_file,
@@ -352,24 +358,34 @@ impl ApiGenContext<'_> {
         Ok(())
     }
 
-    fn generate_alias(&mut self, alias: &Field) -> Result<(), Error> {
-        let upper_camel_name = to_upper_camel_case(&alias.name);
-        // TODO: generate newtypes for manual_print
-        if let Some(FieldSize::Fixed(length)) = alias.size {
+    fn generate_alias(&mut self, alias: &Alias) -> Result<(), Error> {
+        let upper_camel_name = to_upper_camel_case(&alias.field().name);
+
+        let opt_derives = if alias.manual_print() {
+            ""
+        } else {
+            "Debug, PartialEq, Default, "
+        };
+        writeln!(self.output_file, "#[derive({}Copy, Clone)]", opt_derives)?;
+        writeln!(self.output_file, "#[repr(C, packed)]")?;
+        if let Some(FieldSize::Fixed(length)) = alias.field().size {
             writeln!(
                 self.output_file,
-                "pub type {} = [{}; {}];",
+                "pub struct {}(pub[{}; {}]);",
                 upper_camel_name,
-                to_rust_type(&alias.r#type)?,
+                to_rust_type(&alias.field().r#type)?,
                 length
             )?;
         } else {
             writeln!(
                 self.output_file,
-                "pub type {} = {};",
+                "pub struct {}(pub {});",
                 upper_camel_name,
-                to_rust_type(&alias.r#type)?
+                to_rust_type(&alias.field().r#type)?
             )?;
+        }
+        if !alias.manual_endian() {
+            self.generate_endian_swap(&alias.field().name, EndianSwapInput::Alias(alias.field()))?;
         }
 
         Ok(())
@@ -610,7 +626,7 @@ impl ApiGenContext<'_> {
         Ok(())
     }
 
-    fn generate_endian_swap(&mut self, name: &str, fields: &[Field]) -> Result<(), Error> {
+    fn generate_endian_swap(&mut self, name: &str, input: EndianSwapInput) -> Result<(), Error> {
         writeln!(
             self.output_file,
             "impl ::vpp_plugin::vlibapi::EndianSwap for {} {{",
@@ -621,14 +637,22 @@ impl ApiGenContext<'_> {
             "    fn endian_swap(&mut self, to_net: bool) {{",
         )?;
         // Suppress potential used variable warning
-        writeln!(self.output_file, "        let _ = to_net;",)?;
+        writeln!(self.output_file, "        let _ = to_net;")?;
+        let fields = match input {
+            EndianSwapInput::Fields(fields) => fields,
+            EndianSwapInput::Alias(field) => std::slice::from_ref(field),
+        };
         for field in fields {
+            let field_name = match input {
+                EndianSwapInput::Fields(_) => &field.name,
+                EndianSwapInput::Alias(_) => "0",
+            };
             match field.r#type.as_str() {
                 "u8" | "string" | "bool" => {
                     writeln!(
                         self.output_file,
                         "        // self.{} = self.{} (no-op)",
-                        field.name, field.name
+                        field_name, field_name
                     )?;
                 }
                 "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => match field.size {
@@ -637,21 +661,21 @@ impl ApiGenContext<'_> {
                         writeln!(
                             self.output_file,
                             "            self.{}[i] = self.{}[i].to_be();",
-                            field.name, field.name
+                            field_name, field_name
                         )?;
                         writeln!(self.output_file, "        }}",)?;
                     }
                     Some(FieldSize::Variable(_)) => {
                         return Err(Error::Unimplemented(format!(
                             "VLA field {} for type {} not implemented",
-                            field.name, name
+                            field_name, name
                         )));
                     }
                     None => {
                         writeln!(
                             self.output_file,
                             "        self.{} = self.{}.to_be();",
-                            field.name, field.name
+                            field_name, field.name
                         )?;
                     }
                 },
@@ -661,21 +685,21 @@ impl ApiGenContext<'_> {
                         writeln!(
                             self.output_file,
                             "            self.{}[i] = f64::from_be_bytes(self.{}[i].to_be_bytes());",
-                            field.name, field.name
+                            field_name, field.name
                         )?;
                         writeln!(self.output_file, "        }}",)?;
                     }
                     Some(FieldSize::Variable(_)) => {
                         return Err(Error::Unimplemented(format!(
                             "VLA field {} for type {} not implemented",
-                            field.name, name
+                            field_name, name
                         )));
                     }
                     None => {
                         writeln!(
                             self.output_file,
                             "        self.{} = f64::from_be_bytes(self.{}.to_be_bytes());",
-                            field.name, field.name
+                            field_name, field.name
                         )?;
                     }
                 },
@@ -687,7 +711,7 @@ impl ApiGenContext<'_> {
                         writeln!(
                             self.output_file,
                             "            let mut tmp = self.{}[i];",
-                            field.name
+                            field_name
                         )?;
                         writeln!(
                             self.output_file,
@@ -696,14 +720,14 @@ impl ApiGenContext<'_> {
                         writeln!(
                             self.output_file,
                             "            self.{}[i] = tmp;",
-                            field.name
+                            field_name
                         )?;
                         writeln!(self.output_file, "        }}",)?;
                     }
                     Some(FieldSize::Variable(_)) => {
                         return Err(Error::Unimplemented(format!(
                             "VLA field {} for type {} not implemented",
-                            field.name, name
+                            field_name, name
                         )));
                     }
                     None => {
@@ -712,13 +736,13 @@ impl ApiGenContext<'_> {
                         writeln!(
                             self.output_file,
                             "        let mut tmp = self.{};",
-                            field.name
+                            field_name
                         )?;
                         writeln!(
                             self.output_file,
                             "        ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut tmp, to_net);",
                         )?;
-                        writeln!(self.output_file, "        self.{} = tmp;", field.name)?;
+                        writeln!(self.output_file, "        self.{} = tmp;", field_name)?;
                     }
                 },
             }
@@ -772,7 +796,7 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
         if !t.manual_endian() {
-            self.generate_endian_swap(t.name(), t.fields())?;
+            self.generate_endian_swap(t.name(), EndianSwapInput::Fields(t.fields()))?;
         }
         if t.vla() {
             return Err(Error::Unimplemented(format!(

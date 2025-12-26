@@ -97,6 +97,16 @@ autoendian define test_stream_details
   u8 value;
 };
 
+manual_print typedef u8 test_ip4_address[4];
+typedef vl_api_test_ip4_address_t test_ip4_address2;
+
+autoreply autoendian define test_typedef
+{
+  u32 client_index;
+  u32 context;
+  vl_api_test_ip4_address2_t addr;
+};
+
 service {
   rpc test_stream_get returns test_stream_get_reply
     stream test_stream_details;

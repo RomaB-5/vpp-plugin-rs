@@ -26,7 +26,7 @@ pub enum Statement {
     },
     Typedef {
         field: Field,
-        _flags: Vec<Flag>,
+        flags: Vec<Flag>,
     },
     Enum {
         name: String,
@@ -86,10 +86,7 @@ impl Statement {
     }
 
     fn typedef(field: Field, flags: Vec<Flag>) -> Self {
-        Self::Typedef {
-            field,
-            _flags: flags,
-        }
+        Self::Typedef { field, flags }
     }
 
     fn typedef_block(
@@ -722,7 +719,7 @@ impl Type {
     }
 
     pub fn manual_endian(&self) -> bool {
-        self.flags.contains(&Flag::ManualPrint)
+        self.flags.contains(&Flag::ManualEndian)
     }
 
     pub fn vla(&self) -> bool {
@@ -737,6 +734,26 @@ pub struct Enum {
     pub variants: Vec<EnumVariant>,
 }
 
+#[derive(Debug, Clone)]
+pub struct Alias {
+    field: Field,
+    flags: Vec<Flag>,
+}
+
+impl Alias {
+    pub fn field(&self) -> &Field {
+        &self.field
+    }
+
+    pub fn manual_print(&self) -> bool {
+        self.flags.contains(&Flag::ManualPrint)
+    }
+
+    pub fn manual_endian(&self) -> bool {
+        self.flags.contains(&Flag::ManualEndian)
+    }
+}
+
 #[derive(Debug)]
 pub struct ApiParser {
     global_types_by_name: IndexMap<String, Arc<TypeEntry>>,
@@ -745,7 +762,7 @@ pub struct ApiParser {
     messages: Vec<Message>,
     services: Vec<Service>,
     imports: Vec<String>,
-    aliases: Vec<Field>,
+    aliases: Vec<Alias>,
     unions: Vec<Union>,
     types: Vec<Type>,
     enums: Vec<Enum>,
@@ -923,7 +940,7 @@ impl ApiParser {
                         },
                     )
                 }
-                Statement::Typedef { field, .. } => {
+                Statement::Typedef { field, flags } => {
                     let mut crc = crc32fast::Hasher::new();
                     if let Some(FieldSize::Variable(Some(length_var))) = &field.size {
                         return Err(Error::ArrayVariableNotFound(field.name, length_var.clone()));
@@ -932,7 +949,11 @@ impl ApiParser {
                     crc.update("[]".as_bytes());
 
                     if !import {
-                        self.aliases.push(field.clone());
+                        let alias = Alias {
+                            field: field.clone(),
+                            flags,
+                        };
+                        self.aliases.push(alias);
                     }
 
                     (
@@ -1208,7 +1229,7 @@ impl ApiParser {
         &self.unions
     }
 
-    pub fn aliases(&self) -> &[Field] {
+    pub fn aliases(&self) -> &[Alias] {
         &self.aliases
     }
 
@@ -1448,11 +1469,11 @@ mod tests {
         let t = api
             .aliases()
             .iter()
-            .find(|t| t.name == "ip4_address")
+            .find(|t| t.field().name == "ip4_address")
             .expect("missing ip4_address typedef");
-        assert_eq!(t.r#type, "u8");
-        assert_eq!(t.options, []);
-        assert_eq!(t.size, Some(FieldSize::Fixed(4)));
+        assert_eq!(t.field().r#type, "u8");
+        assert_eq!(t.field().options, []);
+        assert_eq!(t.field().size, Some(FieldSize::Fixed(4)));
 
         // Test union
 

@@ -418,5 +418,14 @@ class IntegrationTestCase(VppTestCase):
         self.assertEqual(details[0].value, 1, f"Expected first details value to be 1 but got {details[0].value}")
         self.assertEqual(details[1].value, 2, f"Expected second details value to be 2 but got {details[1].value}")
 
+    def test_api_typedef(self):
+        """API using typedef"""
+        self.vapi.api(
+            self.vapi.papi.test_typedef,
+            {
+                'addr': bytes([1, 2, 3, 4]),
+            },
+        )
+
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

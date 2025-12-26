@@ -2,7 +2,7 @@
 //!
 
 use lazy_static::lazy_static;
-use std::{fmt, ptr::NonNull, str::FromStr, sync::atomic::AtomicU64};
+use std::{fmt, net::Ipv4Addr, ptr::NonNull, str::FromStr, sync::atomic::AtomicU64};
 
 use vpp_plugin::{
     bindings::{ip4_header_t, vnet_api_error_t_VNET_API_ERROR_INVALID_VALUE},
@@ -503,6 +503,25 @@ fn counter_test_command(vm: &mut vlib::BarrierHeldMainRef, input: &str) -> Resul
     Ok(())
 }
 
+impl std::fmt::Debug for test_api::TestIp4Address {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ipv4Addr::from_octets(self.0).fmt(f)
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for test_api::TestIp4Address {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl PartialEq for test_api::TestIp4Address {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
 struct ApiHandler;
 
 impl test_api::Handlers for ApiHandler {
@@ -644,6 +663,16 @@ impl test_api::Handlers for ApiHandler {
             .into(),
         );
         Ok(test_api::TestStreamGetReply::default().into())
+    }
+
+    fn test_typedef(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestTypedef,
+    ) -> Result<vlibapi::Message<test_api::TestTypedefReply>, i32> {
+        if mp.addr.0 .0 != [1, 2, 3, 4] {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        Ok(test_api::TestTypedefReply::default().into())
     }
 }
 

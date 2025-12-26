@@ -576,6 +576,75 @@ impl test_api::Handlers for ApiHandler {
         }
         .into())
     }
+
+    fn test_response(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestResponse,
+    ) -> Result<vlibapi::Message<test_api::TestResponseReply>, i32> {
+        Ok(test_api::TestResponseReply {
+            value: mp.value,
+            ..Default::default()
+        }
+        .into())
+    }
+
+    fn test_response_no_retval(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestResponseNoRetval,
+    ) -> vlibapi::Message<test_api::TestResponseNoRetvalReply> {
+        test_api::TestResponseNoRetvalReply {
+            value: mp.value,
+            ..Default::default()
+        }
+        .into()
+    }
+
+    fn test_dump(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestDump,
+        mut stream: vlibapi::Stream<test_api::TestDetails>,
+    ) {
+        stream.send_message(
+            test_api::TestDetails {
+                context: mp.context,
+                value: 1,
+                ..Default::default()
+            }
+            .into(),
+        );
+        stream.send_message(
+            test_api::TestDetails {
+                context: mp.context,
+                value: 2,
+                ..Default::default()
+            }
+            .into(),
+        );
+    }
+
+    fn test_stream_get(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestStreamGet,
+        mut stream: ::vpp_plugin::vlibapi::Stream<test_api::TestStreamDetails>,
+    ) -> Result<vlibapi::Message<test_api::TestStreamGetReply>, i32> {
+        stream.send_message(
+            test_api::TestStreamDetails {
+                context: mp.context,
+                value: 1,
+                ..Default::default()
+            }
+            .into(),
+        );
+        stream.send_message(
+            test_api::TestStreamDetails {
+                context: mp.context,
+                value: 2,
+                ..Default::default()
+            }
+            .into(),
+        );
+        Ok(test_api::TestStreamGetReply::default().into())
+    }
 }
 
 #[vlib_init_function]

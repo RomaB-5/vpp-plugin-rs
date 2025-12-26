@@ -384,5 +384,39 @@ class IntegrationTestCase(VppTestCase):
             },
         )
 
+    def test_api_reply(self):
+        """API reply"""
+        reply = self.vapi.api(
+            self.vapi.papi.test_response,
+            {
+                'value': 42,
+            },
+        )
+        self.assertEqual(reply.value, 42, f"Expected value of 42 to be returned but got {reply.value}")
+
+    def test_api_reply_no_retval(self):
+        """API reply with no retval field"""
+        reply = self.vapi.api(
+            self.vapi.papi.test_response_no_retval,
+            {
+                'value': 42.0,
+            },
+        )
+        self.assertEqual(reply.value, 42.0, f"Expected value of 42.0 to be returned but got {reply.value}")
+
+    def test_api_stream(self):
+        """API using legacy streams"""
+        details = self.vapi.papi.test_dump()
+        self.assertEqual(len(details), 2, f"Expected 2 details to be returned but got {len(details)}")
+        self.assertEqual(details[0].value, 1, f"Expected first details value to be 1 but got {details[0].value}")
+        self.assertEqual(details[1].value, 2, f"Expected second details value to be 2 but got {details[1].value}")
+
+    def test_api_stream_message(self):
+        """API using modern streams"""
+        _, details = self.vapi.papi.test_stream_get()
+        self.assertEqual(len(details), 2, f"Expected 2 details to be returned but got {len(details)}")
+        self.assertEqual(details[0].value, 1, f"Expected first details value to be 1 but got {details[0].value}")
+        self.assertEqual(details[1].value, 2, f"Expected second details value to be 2 but got {details[1].value}")
+
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

@@ -812,7 +812,39 @@ impl ApiGenContext<'_> {
                     .message(service.reply())
                     .map(|reply| reply.has_retval())
                     .unwrap_or_default();
-                if retval_in_reply_msg {
+                if let Some(stream_message) = service.stream_message() {
+                    let stream_message = format!(
+                        "::vpp_plugin::vlibapi::Stream<{}>",
+                        to_upper_camel_case(stream_message),
+                    );
+                    if retval_in_reply_msg {
+                        writeln!(
+                            self.output_file,
+                            "    fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}, stream: {}) -> Result<{}, i32>;",
+                            service.caller(),
+                            caller_upper_camel,
+                            stream_message,
+                            reply_message
+                        )?;
+                    } else {
+                        writeln!(
+                            self.output_file,
+                            "    fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}, stream: {}) -> {};",
+                            service.caller(),
+                            caller_upper_camel,
+                            stream_message,
+                            reply_message
+                        )?;
+                    }
+                } else if service.stream() {
+                    writeln!(
+                        self.output_file,
+                        "    fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}, stream: ::vpp_plugin::vlibapi::Stream<{}>);",
+                        service.caller(),
+                        caller_upper_camel,
+                        to_upper_camel_case(service.reply()),
+                    )?;
+                } else if retval_in_reply_msg {
                     writeln!(
                         self.output_file,
                         "    fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}) -> Result<{}, i32>;",
@@ -855,35 +887,6 @@ impl ApiGenContext<'_> {
             if service.reply() == "null" {
                 writeln!(self.output_file, "    H::{}(vm, mp);", service.caller())?;
             } else {
-                let retval_in_reply_msg = self
-                    .parser
-                    .message(service.reply())
-                    .map(|reply| reply.has_retval())
-                    .unwrap_or_default();
-                if retval_in_reply_msg {
-                    writeln!(
-                        self.output_file,
-                        "    let mut reply = match H::{}(vm, mp) {{",
-                        service.caller()
-                    )?;
-                    writeln!(self.output_file, "        Ok(reply) => reply,")?;
-                    writeln!(
-                        self.output_file,
-                        "        Err(retval) => {} {{",
-                        to_upper_camel_case(service.reply())
-                    )?;
-                    writeln!(self.output_file, "            retval,")?;
-                    writeln!(self.output_file, "            ..Default::default()")?;
-                    writeln!(self.output_file, "        }}")?;
-                    writeln!(self.output_file, "        .into(),")?;
-                    writeln!(self.output_file, "    }};")?;
-                } else {
-                    writeln!(
-                        self.output_file,
-                        "    let mut reply = H::{}(vm, mp);",
-                        service.caller()
-                    )?;
-                }
                 writeln!(
                     self.output_file,
                     "    ::vpp_plugin::vlibapi::registration_scope(|s| {{"
@@ -894,13 +897,57 @@ impl ApiGenContext<'_> {
                     self.output_file,
                     "        if let Some(reg) = s.from_client_index(vm, mp.client_index) {{"
                 )?;
-                writeln!(self.output_file, "            reply.context = mp.context;",)?;
-                writeln!(
-                    self.output_file,
-                    "            {}_endian(::std::ptr::addr_of_mut!(*reply), true);",
-                    service.reply()
-                )?;
-                writeln!(self.output_file, "            reg.send_message(reply);")?;
+                let retval_in_reply_msg = self
+                    .parser
+                    .message(service.reply())
+                    .map(|reply| reply.has_retval())
+                    .unwrap_or_default();
+                let stream_message_arg = if service.stream_message().is_some() {
+                    ", ::vpp_plugin::vlibapi::Stream::new(reg)"
+                } else {
+                    ""
+                };
+                if service.stream() && service.stream_message().is_none() {
+                    writeln!(
+                        self.output_file,
+                        "            H::{}(vm, mp, ::vpp_plugin::vlibapi::Stream::new(reg));",
+                        service.caller()
+                    )?;
+                } else if retval_in_reply_msg {
+                    writeln!(
+                        self.output_file,
+                        "            let mut reply = match H::{}(vm, mp{}) {{",
+                        service.caller(),
+                        stream_message_arg,
+                    )?;
+                    writeln!(self.output_file, "                Ok(reply) => reply,")?;
+                    writeln!(
+                        self.output_file,
+                        "                Err(retval) => {} {{",
+                        to_upper_camel_case(service.reply())
+                    )?;
+                    writeln!(self.output_file, "                    retval,")?;
+                    writeln!(self.output_file, "                    ..Default::default()")?;
+                    writeln!(self.output_file, "                }}")?;
+                    writeln!(self.output_file, "                .into(),")?;
+                    writeln!(self.output_file, "            }};")?;
+                } else {
+                    writeln!(
+                        self.output_file,
+                        "            let mut reply = H::{}(vm, mp{});",
+                        service.caller(),
+                        stream_message_arg,
+                    )?;
+                }
+                if !service.stream() || service.stream_message().is_some() {
+                    writeln!(self.output_file, "            reply.context = mp.context;",)?;
+                    writeln!(
+                        self.output_file,
+                        "            {}_endian(::std::ptr::addr_of_mut!(*reply), true);",
+                        service.reply()
+                    )?;
+                    writeln!(self.output_file, "            reg.send_message(reply);")?;
+                }
                 writeln!(self.output_file, "        }}")?;
                 writeln!(self.output_file, "    }})")?;
             }

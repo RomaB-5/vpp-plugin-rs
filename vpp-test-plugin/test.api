@@ -43,3 +43,61 @@ autoreply autoendian define test_array
   vl_api_test_node_type_t array3[2];
   f64 array4[2];
 };
+
+autoendian define test_response
+{
+  u32 client_index;
+  u32 context;
+  u16 value;
+};
+
+autoendian define test_response_reply
+{
+  u32 context;
+  i32 retval;
+  u16 value;
+};
+
+autoendian define test_response_no_retval
+{
+  u32 client_index;
+  u32 context;
+  f64 value;
+};
+
+autoendian define test_response_no_retval_reply
+{
+  u32 context;
+  f64 value;
+};
+
+autoendian define test_dump
+{
+  u32 client_index;
+  u32 context;
+};
+
+autoendian define test_details
+{
+  u32 client_index;
+  u32 context;
+  u8 value;
+};
+
+autoendian autoreply define test_stream_get
+{
+  u32 client_index;
+  u32 context;
+};
+
+autoendian define test_stream_details
+{
+  u32 client_index;
+  u32 context;
+  u8 value;
+};
+
+service {
+  rpc test_stream_get returns test_stream_get_reply
+    stream test_stream_details;
+};

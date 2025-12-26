@@ -239,7 +239,6 @@ impl<'scope> RegistrationScope<'scope> {
     ///
     /// Returns `Some(&mut Registration)` when the client index corresponds to a current
     /// registration, or `None` if no registration exists for that index.
-    // FIXME: change &mut to & since we cannot prevent aliases here
     pub fn from_client_index(
         &self,
         _vm: &BarrierHeldMainRef,
@@ -270,4 +269,40 @@ where
 {
     let scope = RegistrationScope(PhantomData);
     f(&scope)
+}
+
+/// A stream for sending messages to a registration
+pub struct Stream<'scope, T> {
+    registration: &'scope mut Registration,
+    _phantom: PhantomData<T>,
+}
+
+impl<'scope, T> Stream<'scope, T> {
+    /// Creates a new stream from a mutable reference to a registration.
+    pub fn new(registration: &'scope mut Registration) -> Self {
+        Self {
+            registration,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Sends a network-endian (big-endian) message to the registration
+    ///
+    /// Since the message is in network order, then it is sent without performing an endian swap.
+    pub fn send_message_ne(&mut self, message: Message<T>) {
+        self.registration.send_message(message);
+    }
+
+    /// Consumes the stream and returns the underlying registration reference.
+    pub fn into_inner(self) -> &'scope mut Registration {
+        self.registration
+    }
+}
+
+impl<'scope, T: EndianSwap> Stream<'scope, T> {
+    /// Sends a message to the registration after performing endian swap to network order.
+    pub fn send_message(&mut self, mut message: Message<T>) {
+        message.endian_swap(true);
+        self.send_message_ne(message);
+    }
 }

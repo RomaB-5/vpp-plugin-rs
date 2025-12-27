@@ -217,6 +217,40 @@ struct ApiGenContext<'a> {
 }
 
 impl ApiGenContext<'_> {
+    fn generate_field(
+        &mut self,
+        parent_type_name: &str,
+        parent_type: &str,
+        field: &Field,
+    ) -> Result<(), Error> {
+        match &field.size {
+            Some(FieldSize::Fixed(size)) => {
+                writeln!(
+                    self.output_file,
+                    "    pub {}: [{}; {}],",
+                    field.name,
+                    to_rust_type(&field.r#type)?,
+                    size,
+                )?;
+            }
+            Some(FieldSize::Variable(_)) => {
+                return Err(Error::Unimplemented(format!(
+                    "VLA for field {} in {} {} not implemented",
+                    field.name, parent_type, parent_type_name
+                )));
+            }
+            None => {
+                writeln!(
+                    self.output_file,
+                    "    pub {}: {},",
+                    field.name,
+                    to_rust_type(&field.r#type)?,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     fn generate_message(&mut self, id: usize, message: &Message) -> Result<(), Error> {
         let upper_camel_name = to_upper_camel_case(message.name());
 
@@ -236,32 +270,7 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "#[repr(C, packed)]")?;
         writeln!(self.output_file, "pub struct {} {{", upper_camel_name)?;
         for field in message.fields() {
-            match &field.size {
-                Some(FieldSize::Fixed(size)) => {
-                    writeln!(
-                        self.output_file,
-                        "    pub {}: [{}; {}],",
-                        field.name,
-                        to_rust_type(&field.r#type)?,
-                        size,
-                    )?;
-                }
-                Some(FieldSize::Variable(_)) => {
-                    return Err(Error::Unimplemented(format!(
-                        "VLA for field {} in message {} not implemented",
-                        field.name,
-                        message.name()
-                    )));
-                }
-                None => {
-                    writeln!(
-                        self.output_file,
-                        "    pub {}: {},",
-                        field.name,
-                        to_rust_type(&field.r#type)?,
-                    )?;
-                }
-            };
+            self.generate_field(message.name(), "message", field)?;
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
@@ -515,32 +524,7 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "#[repr(C, packed)]")?;
         writeln!(self.output_file, "pub union {} {{", upper_camel_name)?;
         for field in un.fields() {
-            match &field.size {
-                Some(FieldSize::Fixed(size)) => {
-                    writeln!(
-                        self.output_file,
-                        "    pub {}: [{}; {}],",
-                        field.name,
-                        to_rust_type(&field.r#type)?,
-                        size,
-                    )?;
-                }
-                Some(FieldSize::Variable(_)) => {
-                    return Err(Error::Unimplemented(format!(
-                        "VLA for field {} in union {} not implemented",
-                        field.name,
-                        un.name()
-                    )));
-                }
-                None => {
-                    writeln!(
-                        self.output_file,
-                        "    pub {}: {},",
-                        field.name,
-                        to_rust_type(&field.r#type)?,
-                    )?;
-                }
-            };
+            self.generate_field(un.name(), "union", field)?;
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
@@ -698,32 +682,7 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "#[repr(C, packed)]")?;
         writeln!(self.output_file, "pub struct {} {{", upper_camel_name)?;
         for field in t.fields() {
-            match &field.size {
-                Some(FieldSize::Fixed(size)) => {
-                    writeln!(
-                        self.output_file,
-                        "    pub {}: [{}; {}],",
-                        field.name,
-                        to_rust_type(&field.r#type)?,
-                        size,
-                    )?;
-                }
-                Some(FieldSize::Variable(_)) => {
-                    return Err(Error::Unimplemented(format!(
-                        "VLA for field {} in struct {} not implemented",
-                        field.name,
-                        t.name()
-                    )));
-                }
-                None => {
-                    writeln!(
-                        self.output_file,
-                        "    pub {}: {},",
-                        field.name,
-                        to_rust_type(&field.r#type)?,
-                    )?;
-                }
-            };
+            self.generate_field(t.name(), "type", field)?;
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;

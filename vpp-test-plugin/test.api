@@ -99,12 +99,36 @@ autoendian define test_stream_details
 
 manual_print typedef u8 test_ip4_address[4];
 typedef vl_api_test_ip4_address_t test_ip4_address2;
+manual_print typedef u8 test_ip6_address[16];
 
 autoreply autoendian define test_typedef
 {
   u32 client_index;
   u32 context;
   vl_api_test_ip4_address2_t addr;
+};
+
+enum test_address_family : u8 {
+  TEST_ADDRESS_IP4 = 0,
+  TEST_ADDRESS_IP6,
+};
+
+/* Test union */
+union test_address_union {
+  vl_api_test_ip4_address_t ip4;
+  vl_api_test_ip6_address_t ip6;
+};
+
+manual_print typedef test_address {
+  vl_api_test_address_family_t af;
+  vl_api_test_address_union_t un;
+};
+
+autoreply autoendian define test_union
+{
+  u32 client_index;
+  u32 context;
+  vl_api_test_address_t addr;
 };
 
 service {

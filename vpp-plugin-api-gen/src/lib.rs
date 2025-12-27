@@ -544,78 +544,10 @@ impl ApiGenContext<'_> {
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
-        writeln!(
-            self.output_file,
-            "unsafe extern \"C\" fn {}_endian(a: *mut {}, _to_net: bool) {{",
-            un.name(),
-            upper_camel_name
-        )?;
-        for field in un.fields() {
-            match field.r#type.as_str() {
-                "u8" | "string" | "bool" => {
-                    writeln!(
-                        self.output_file,
-                        "    // (*a).{} = (*a).{} (no-op)",
-                        field.name, field.name
-                    )?;
-                }
-                "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => match field.size {
-                    Some(FieldSize::Fixed(size)) => {
-                        writeln!(self.output_file, "    for i in 0..{} {{", size)?;
-                        writeln!(
-                            self.output_file,
-                            "        (*a).{}[i] = (*a).{}[i].to_be();",
-                            field.name, field.name
-                        )?;
-                        writeln!(self.output_file, "    }}",)?;
-                    }
-                    Some(FieldSize::Variable(_)) => {
-                        return Err(Error::Unimplemented(format!(
-                            "VLA field {} for union {} not implemented",
-                            field.name,
-                            un.name()
-                        )));
-                    }
-                    None => {
-                        writeln!(
-                            self.output_file,
-                            "    (*a).{} = (*a).{}.to_be();",
-                            field.name, field.name
-                        )?;
-                    }
-                },
-                "f64" => {
-                    writeln!(
-                        self.output_file,
-                        "    (*a).{} = f64::from_be_bytes((*a).{}.to_be_bytes());",
-                        field.name, field.name
-                    )?;
-                }
-                _ => {
-                    writeln!(
-                        self.output_file,
-                        "    {}_endian(::std::ptr::addr_of_mut!((*a).{}), to_net);",
-                        field.r#type, field.name
-                    )?;
-                }
-            }
-        }
-        writeln!(self.output_file, "}}")?;
-        writeln!(self.output_file)?;
-        writeln!(
-            self.output_file,
-            "unsafe extern \"C\" fn {}_calc_size(_a: *mut {}) -> ::vpp_plugin::bindings::uword {{",
-            un.name(),
-            upper_camel_name
-        )?;
-        // TODO: variable array types
-        writeln!(
-            self.output_file,
-            "    std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
-            upper_camel_name
-        )?;
-        writeln!(self.output_file, "}}")?;
-        writeln!(self.output_file)?;
+        // TODO: enforce manual_endian for unions?
+
+        // Note: no use of variable-length arrays is already enforced by the parser
+
         Ok(())
     }
 

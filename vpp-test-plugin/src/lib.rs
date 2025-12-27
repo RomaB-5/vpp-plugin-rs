@@ -2,7 +2,13 @@
 //!
 
 use lazy_static::lazy_static;
-use std::{fmt, net::Ipv4Addr, ptr::NonNull, str::FromStr, sync::atomic::AtomicU64};
+use std::{
+    fmt,
+    net::{Ipv4Addr, Ipv6Addr},
+    ptr::NonNull,
+    str::FromStr,
+    sync::atomic::AtomicU64,
+};
 
 use vpp_plugin::{
     bindings::{ip4_header_t, vnet_api_error_t_VNET_API_ERROR_INVALID_VALUE},
@@ -25,7 +31,10 @@ use vpp_plugin::{
     ErrorCounters, NextNodes,
 };
 
-use crate::test_api::{TEST_NODE_TYPE_X1, TEST_NODE_TYPE_X4};
+use crate::test_api::{
+    TestAddressUnion, TestIp4Address, TEST_ADDRESS_IP4, TEST_ADDRESS_IP6, TEST_NODE_TYPE_X1,
+    TEST_NODE_TYPE_X4,
+};
 
 mod test_api {
     include!(concat!(env!("OUT_DIR"), "/src/test_api.rs"));
@@ -522,6 +531,75 @@ impl PartialEq for test_api::TestIp4Address {
     }
 }
 
+impl std::fmt::Debug for test_api::TestIp6Address {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Ipv6Addr::from_octets(self.0).fmt(f)
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for test_api::TestIp6Address {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl PartialEq for test_api::TestIp6Address {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl std::fmt::Debug for test_api::TestAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        unsafe {
+            if self.af == TEST_ADDRESS_IP4 {
+                self.un.ip4.fmt(f)
+            } else if self.af == TEST_ADDRESS_IP6 {
+                self.un.ip6.fmt(f)
+            } else {
+                write!(f, "Unknown af {:?}", self.af)
+            }
+        }
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for test_api::TestAddress {
+    fn default() -> Self {
+        Self {
+            af: Default::default(),
+            un: TestAddressUnion {
+                ip4: TestIp4Address::default(),
+            },
+        }
+    }
+}
+
+impl PartialEq for test_api::TestAddress {
+    fn eq(&self, other: &Self) -> bool {
+        if self.af != other.af {
+            return false;
+        }
+        unsafe {
+            if self.af == TEST_ADDRESS_IP4 {
+                self.un.ip4 == other.un.ip4
+            } else if self.af == TEST_ADDRESS_IP6 {
+                self.un.ip6 == other.un.ip6
+            } else {
+                false
+            }
+        }
+    }
+}
+
+impl ::vpp_plugin::vlibapi::EndianSwap for test_api::TestAddressUnion {
+    fn endian_swap(&mut self, to_net: bool) {
+        let _ = to_net;
+        // no-op
+    }
+}
+
 struct ApiHandler;
 
 impl test_api::Handlers for ApiHandler {
@@ -673,6 +751,27 @@ impl test_api::Handlers for ApiHandler {
             return Err(VNET_ERR_INVALID_ARGUMENT.into());
         }
         Ok(test_api::TestTypedefReply::default().into())
+    }
+
+    fn test_union(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestUnion,
+    ) -> Result<vlibapi::Message<test_api::TestUnionReply>, i32> {
+        unsafe {
+            if mp.addr.af == TEST_ADDRESS_IP4 {
+                if mp.addr.un.ip4.0 != [1, 2, 3, 4] {
+                    return Err(VNET_ERR_INVALID_ARGUMENT.into());
+                }
+            } else if mp.addr.af == TEST_ADDRESS_IP6 {
+                if mp.addr.un.ip6.0 != [1, 2, 3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0]
+                {
+                    return Err(VNET_ERR_INVALID_ARGUMENT.into());
+                }
+            } else {
+                return Err(VNET_ERR_INVALID_ARGUMENT.into());
+            }
+        }
+        Ok(test_api::TestUnionReply::default().into())
     }
 }
 

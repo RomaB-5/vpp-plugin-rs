@@ -427,5 +427,31 @@ class IntegrationTestCase(VppTestCase):
             },
         )
 
+    def test_api_union(self):
+        """API using union"""
+        test_address_family = VppEnum.vl_api_test_address_family_t
+        self.vapi.api(
+            self.vapi.papi.test_union,
+            {
+                'addr': {
+                    'af': test_address_family.TEST_ADDRESS_IP4,
+                    'un': {
+                        'ip4': bytes([1, 2, 3, 4]),
+                    }
+                }
+            },
+        )
+        self.vapi.api(
+            self.vapi.papi.test_union,
+            {
+                'addr': {
+                    'af': test_address_family.TEST_ADDRESS_IP6,
+                    'un': {
+                        'ip6': bytes([1, 2, 3, 4, 5, 6, 7, 8, 9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0]),
+                    }
+                }
+            },
+        )
+
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

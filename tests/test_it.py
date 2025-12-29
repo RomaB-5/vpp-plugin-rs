@@ -453,5 +453,38 @@ class IntegrationTestCase(VppTestCase):
             },
         )
 
+    def test_api_vla(self):
+        """API using variable length arrays"""
+        reply = self.vapi.api(
+            self.vapi.papi.test_variable_array_u32,
+            {
+                'nitems': 4,
+                'values': [42, 0xdeadbeef, 0, 0xffffffff],
+            },
+        )
+        self.assertEqual(reply.values, [42, 0xdeadbeef, 0, 0xffffffff])
+        self.vapi.api(
+            self.vapi.papi.test_variable_array_u8,
+            {
+                'nitems': 3,
+                'values': bytes([42, 0, 0xff]),
+            },
+        )
+        self.vapi.api(
+            self.vapi.papi.test_variable_array_f64,
+            {
+                'nitems': 2,
+                'values': [0.0, 42.0],
+            },
+        )
+        test_node_type = VppEnum.vl_api_test_node_type_t
+        self.vapi.api(
+            self.vapi.papi.test_variable_array_custom,
+            {
+                'nitems': 2,
+                'values': [test_node_type.TEST_NODE_TYPE_X1, test_node_type.TEST_NODE_TYPE_X4],
+            },
+        )
+
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

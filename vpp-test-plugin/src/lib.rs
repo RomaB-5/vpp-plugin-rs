@@ -627,7 +627,7 @@ impl PartialEq for test_api::TestAddress {
 }
 
 impl ::vpp_plugin::vlibapi::EndianSwap for test_api::TestAddressUnion {
-    fn endian_swap(&mut self, to_net: bool) {
+    unsafe fn endian_swap(&mut self, to_net: bool) {
         let _ = to_net;
         // no-op
     }
@@ -722,22 +722,24 @@ impl test_api::Handlers for ApiHandler {
         mp: &test_api::TestDump,
         mut stream: vlibapi::Stream<test_api::TestDetails>,
     ) {
-        stream.send_message(
-            test_api::TestDetails {
-                context: mp.context,
-                value: 1,
-                ..Default::default()
-            }
-            .into(),
-        );
-        stream.send_message(
-            test_api::TestDetails {
-                context: mp.context,
-                value: 2,
-                ..Default::default()
-            }
-            .into(),
-        );
+        unsafe {
+            stream.send_message(
+                test_api::TestDetails {
+                    context: mp.context,
+                    value: 1,
+                    ..Default::default()
+                }
+                .into(),
+            );
+            stream.send_message(
+                test_api::TestDetails {
+                    context: mp.context,
+                    value: 2,
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
     }
 
     fn test_stream_get(
@@ -745,22 +747,24 @@ impl test_api::Handlers for ApiHandler {
         mp: &test_api::TestStreamGet,
         mut stream: ::vpp_plugin::vlibapi::Stream<test_api::TestStreamDetails>,
     ) -> Result<vlibapi::Message<test_api::TestStreamGetReply>, i32> {
-        stream.send_message(
-            test_api::TestStreamDetails {
-                context: mp.context,
-                value: 1,
-                ..Default::default()
-            }
-            .into(),
-        );
-        stream.send_message(
-            test_api::TestStreamDetails {
-                context: mp.context,
-                value: 2,
-                ..Default::default()
-            }
-            .into(),
-        );
+        unsafe {
+            stream.send_message(
+                test_api::TestStreamDetails {
+                    context: mp.context,
+                    value: 1,
+                    ..Default::default()
+                }
+                .into(),
+            );
+            stream.send_message(
+                test_api::TestStreamDetails {
+                    context: mp.context,
+                    value: 2,
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
         Ok(Default::default())
     }
 
@@ -793,6 +797,67 @@ impl test_api::Handlers for ApiHandler {
             }
         }
         Ok(Default::default())
+    }
+
+    unsafe fn test_variable_array_u32(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestVariableArrayU32,
+    ) -> Result<vlibapi::Message<test_api::TestVariableArrayU32Reply>, i32> {
+        unsafe {
+            println!("test_variable_array_u32({:?}, {:?})", mp, mp.values());
+            if mp.values() != [42, 0xdeadbeef, 0, 0xffffffff] {
+                return Err(VNET_ERR_INVALID_ARGUMENT.into());
+            }
+            let mut reply = test_api::TestVariableArrayU32Reply::new_message(mp.nitems.into());
+            for (src, dest) in mp.values().iter().zip(reply.values_mut()) {
+                *dest = *src;
+            }
+            println!(
+                "test_variable_array_u32() <- {:?}, {:?}",
+                reply,
+                reply.values()
+            );
+            Ok(reply)
+        }
+    }
+
+    unsafe fn test_variable_array_u8(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestVariableArrayU8,
+    ) -> Result<vlibapi::Message<test_api::TestVariableArrayU8Reply>, i32> {
+        unsafe {
+            println!("test_variable_array_u8({:?}, {:?})", mp, mp.values());
+            if mp.values() != [42, 0, 0xff] {
+                return Err(VNET_ERR_INVALID_ARGUMENT.into());
+            }
+            Ok(Default::default())
+        }
+    }
+
+    unsafe fn test_variable_array_f64(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestVariableArrayF64,
+    ) -> Result<vlibapi::Message<test_api::TestVariableArrayF64Reply>, i32> {
+        unsafe {
+            println!("test_variable_array_f64({:?}, {:?})", mp, mp.values());
+            if mp.values() != [0.0, 42.0] {
+                return Err(VNET_ERR_INVALID_ARGUMENT.into());
+            }
+            Ok(Default::default())
+        }
+    }
+
+    unsafe fn test_variable_array_custom(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestVariableArrayCustom,
+    ) -> Result<vlibapi::Message<test_api::TestVariableArrayCustomReply>, i32> {
+        unsafe {
+            println!("test_variable_array_custom({:?}, {:?})", mp, mp.values());
+            if mp.values() != [TEST_NODE_TYPE_X1, TEST_NODE_TYPE_X4] {
+                return Err(VNET_ERR_INVALID_ARGUMENT.into());
+            }
+            Ok(Default::default())
+        }
     }
 }
 

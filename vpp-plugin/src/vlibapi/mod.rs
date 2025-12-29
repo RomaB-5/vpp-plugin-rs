@@ -251,7 +251,13 @@ pub trait EndianSwap {
     /// Swap the endianness of the message in-place.
     ///
     /// `to_net == true` indicates conversion from host to network order.
-    fn endian_swap(&mut self, to_net: bool);
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that if `self` contains a variable length array that elements
+    /// indexed from 0 up to the contents of the length field are initialised and contained within
+    /// the memory allocated for the object.
+    unsafe fn endian_swap(&mut self, to_net: bool);
 }
 
 /// Registration state for the VPP side of an API client
@@ -369,7 +375,13 @@ impl<'scope, T> Stream<'scope, T> {
 
 impl<'scope, T: EndianSwap> Stream<'scope, T> {
     /// Sends a message to the registration after performing endian swap to network order.
-    pub fn send_message(&mut self, mut message: Message<T>) {
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that if `messages` contains a variable length array that elements
+    /// indexed from 0 up to the contents of the length field are initialised and contained within
+    /// the memory allocated for the object.
+    pub unsafe fn send_message(&mut self, mut message: Message<T>) {
         message.endian_swap(true);
         self.send_message_ne(message);
     }

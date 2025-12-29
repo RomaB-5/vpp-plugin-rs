@@ -113,6 +113,19 @@ fn to_rust_type(r#type: &str) -> Result<String, Error> {
     })
 }
 
+fn to_rust_vla_elem_type(r#type: &str) -> Result<String, Error> {
+    Ok(match r#type {
+        // Note: u8 excluded here as it already has an alignment of 1 byte
+        "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "f64" => {
+            format!(
+                "::vpp_plugin::vlibapi::num_unaligned::Unaligned{}",
+                to_upper_camel_case(r#type)
+            )
+        }
+        _ => to_rust_type(r#type)?,
+    })
+}
+
 /// Generate Rust code for the VPP handling of APIs of from a `.api` file
 ///
 /// # Examples
@@ -217,12 +230,7 @@ struct ApiGenContext<'a> {
 }
 
 impl ApiGenContext<'_> {
-    fn generate_field(
-        &mut self,
-        parent_type_name: &str,
-        parent_type: &str,
-        field: &Field,
-    ) -> Result<(), Error> {
+    fn generate_field(&mut self, field: &Field) -> Result<(), Error> {
         match &field.size {
             Some(FieldSize::Fixed(size)) => {
                 writeln!(
@@ -234,10 +242,12 @@ impl ApiGenContext<'_> {
                 )?;
             }
             Some(FieldSize::Variable(_)) => {
-                return Err(Error::Unimplemented(format!(
-                    "VLA for field {} in {} {} not implemented",
-                    field.name, parent_type, parent_type_name
-                )));
+                writeln!(
+                    self.output_file,
+                    "    pub {}: [{}; 0],",
+                    field.name,
+                    to_rust_vla_elem_type(&field.r#type)?,
+                )?;
             }
             None => {
                 writeln!(
@@ -261,7 +271,7 @@ impl ApiGenContext<'_> {
                 comment.replace("\"", "\\\"")
             )?;
         }
-        let opt_derives = if message.manual_print() {
+        let opt_derives = if message.manual_print() || message.vla().is_some() {
             ""
         } else {
             "Debug, PartialEq, "
@@ -270,7 +280,7 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "#[repr(C, packed)]")?;
         writeln!(self.output_file, "pub struct {} {{", upper_camel_name)?;
         for field in message.fields() {
-            self.generate_field(message.name(), "message", field)?;
+            self.generate_field(field)?;
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
@@ -281,6 +291,78 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "    pub fn msg_id() -> u16 {{")?;
         writeln!(self.output_file, "        msg_id_base() + Self::MSG_ID")?;
         writeln!(self.output_file, "    }}")?;
+        if let Some(field) = message.vla()
+            && let Some(FieldSize::Variable(Some(count_field))) = &field.size
+        {
+            let vla_elem_type = to_rust_vla_elem_type(&field.r#type)?;
+            writeln!(self.output_file)?;
+            writeln!(self.output_file, "    #[allow(dead_code)]")?;
+            writeln!(
+                self.output_file,
+                "    pub unsafe fn {}(&self) -> &[{}] {{",
+                field.name, vla_elem_type
+            )?;
+            writeln!(
+                self.output_file,
+                "        ::std::slice::from_raw_parts(std::ptr::addr_of!(self.{}).cast(), self.{} as usize)",
+                field.name, count_field
+            )?;
+            writeln!(self.output_file, "    }}")?;
+            writeln!(self.output_file)?;
+            writeln!(self.output_file, "    #[allow(dead_code)]")?;
+            writeln!(
+                self.output_file,
+                "    pub unsafe fn {}_mut(&mut self) -> &mut [{}] {{",
+                field.name, vla_elem_type
+            )?;
+            writeln!(
+                self.output_file,
+                "        std::slice::from_raw_parts_mut(std::ptr::addr_of_mut!(self.{}).cast(), self.{} as usize)",
+                field.name, count_field
+            )?;
+            writeln!(self.output_file, "    }}")?;
+            writeln!(self.output_file)?;
+            writeln!(self.output_file, "    #[allow(dead_code)]")?;
+            if let Some(count_field) = message
+                .fields()
+                .iter()
+                .find(|field| &field.name == count_field)
+            {
+                writeln!(
+                    self.output_file,
+                    "    pub fn new_message({}: {}) -> ::vpp_plugin::vlibapi::Message<Self> {{",
+                    count_field.name, count_field.r#type
+                )?;
+                // Avoid clippy::unnecessary_cast warning by only casting when the count field isn't a u32
+                let count_expr = if count_field.r#type == "u32" {
+                    count_field.name.clone()
+                } else {
+                    format!("{} as u32", count_field.name)
+                };
+                writeln!(
+                    self.output_file,
+                    "    let size = ::std::mem::size_of::<Self>() as u32 + {} * ::std::mem::size_of::<{}>() as u32;",
+                    count_expr,
+                    to_rust_type(&field.r#type)?,
+                )?;
+                writeln!(
+                    self.output_file,
+                    "        let mut message = unsafe {{ ::std::mem::transmute::<::vpp_plugin::vlibapi::Message<u8>, ::vpp_plugin::vlibapi::Message<Self>>(::vpp_plugin::vlibapi::Message::new_bytes(size)) }};",
+                )?;
+                writeln!(
+                    self.output_file,
+                    "        message._vl_msg_id = Self::msg_id();",
+                )?;
+                writeln!(
+                    self.output_file,
+                    "        message.{} = {};",
+                    count_field.name, count_field.name,
+                )?;
+                writeln!(self.output_file, "        message",)?;
+                writeln!(self.output_file, "    }}")?;
+                writeln!(self.output_file)?;
+            }
+        }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
 
@@ -304,6 +386,49 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file)?;
 
         self.generate_endian_swap(message.name(), EndianSwapInput::Fields(message.fields()))?;
+
+        // Manually implement fmt::Debug so that the zero-length (but actually variable-length)
+        // field isn't printed to avoid misleading anyone looking at the output
+        if message.vla().is_some() {
+            writeln!(
+                self.output_file,
+                "impl ::std::fmt::Debug for {} {{",
+                upper_camel_name
+            )?;
+            // Suppress warnings about tmp__vl_msg_id (and any similar)
+            writeln!(self.output_file, "    #[allow(non_snake_case)]")?;
+            writeln!(
+                self.output_file,
+                "    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {{"
+            )?;
+            for field in message.fields() {
+                if !matches!(field.size, Some(FieldSize::Variable(_))) {
+                    writeln!(
+                        self.output_file,
+                        "            let tmp_{} = self.{};",
+                        field.name, field.name
+                    )?;
+                }
+            }
+            writeln!(
+                self.output_file,
+                "        f.debug_struct(\"{}\")",
+                upper_camel_name
+            )?;
+            for field in message.fields() {
+                if !matches!(field.size, Some(FieldSize::Variable(_))) {
+                    writeln!(
+                        self.output_file,
+                        "            .field(\"{}\", &tmp_{})",
+                        field.name, field.name
+                    )?;
+                }
+            }
+            writeln!(self.output_file, "            .finish_non_exhaustive()")?;
+            writeln!(self.output_file, "    }}")?;
+            writeln!(self.output_file, "}}")?;
+            writeln!(self.output_file)?;
+        }
 
         writeln!(
             self.output_file,
@@ -343,18 +468,61 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "    s.into_raw()")?;
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
-        writeln!(
-            self.output_file,
-            "unsafe extern \"C\" fn {}_calc_size(_a: *mut {}) -> ::vpp_plugin::bindings::uword {{",
-            message.name(),
-            upper_camel_name
-        )?;
-        // TODO: variable array types
-        writeln!(
-            self.output_file,
-            "    std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
-            upper_camel_name
-        )?;
+        if let Some(field) = message.vla()
+            && let Some(FieldSize::Variable(Some(count_field))) = &field.size
+            && let Some(count_field) = message
+                .fields()
+                .iter()
+                .find(|field| &field.name == count_field)
+        {
+            write!(self.output_file, "pub ",)?;
+            writeln!(
+                self.output_file,
+                "unsafe extern \"C\" fn {}_calc_size(a: *mut {}) -> ::vpp_plugin::bindings::uword {{",
+                message.name(),
+                upper_camel_name
+            )?;
+            match count_field.r#type.as_str() {
+                "u8" => {
+                    writeln!(
+                        self.output_file,
+                        "    ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword + (*a).{} as ::vpp_plugin::bindings::uword * ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
+                        upper_camel_name,
+                        count_field.name,
+                        to_rust_type(&field.r#type)?,
+                    )?;
+                }
+                "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => {
+                    writeln!(
+                        self.output_file,
+                        "    ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword + {}::from_be((*a).{}) as ::vpp_plugin::bindings::uword * ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
+                        upper_camel_name,
+                        to_rust_type(&count_field.r#type)?,
+                        count_field.name,
+                        to_rust_type(&field.r#type)?,
+                    )?;
+                }
+                _ => {
+                    return Err(Error::Unimplemented(format!(
+                        "Unexpected type of variable-length array count field {} in message {}",
+                        count_field.name,
+                        message.name()
+                    )));
+                }
+            }
+        } else {
+            writeln!(
+                self.output_file,
+                "unsafe extern \"C\" fn {}_calc_size(_a: *mut {}) -> ::vpp_plugin::bindings::uword {{",
+                message.name(),
+                upper_camel_name
+            )?;
+            writeln!(
+                self.output_file,
+                "    ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
+                upper_camel_name
+            )?;
+        }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
         Ok(())
@@ -475,7 +643,7 @@ impl ApiGenContext<'_> {
         )?;
         writeln!(
             self.output_file,
-            "    fn endian_swap(&mut self, to_net: bool) {{",
+            "    unsafe fn endian_swap(&mut self, to_net: bool) {{",
         )?;
         // Suppress potential used variable warning
         writeln!(self.output_file, "        let _ = to_net;",)?;
@@ -527,7 +695,7 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "#[repr(C, packed)]")?;
         writeln!(self.output_file, "pub union {} {{", upper_camel_name)?;
         for field in un.fields() {
-            self.generate_field(un.name(), "union", field)?;
+            self.generate_field(field)?;
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
@@ -553,7 +721,7 @@ impl ApiGenContext<'_> {
         )?;
         writeln!(
             self.output_file,
-            "    fn endian_swap(&mut self, to_net: bool) {{",
+            "    unsafe fn endian_swap(&mut self, to_net: bool) {{",
         )?;
         // Suppress potential used variable warning
         writeln!(self.output_file, "        let _ = to_net;")?;
@@ -566,6 +734,35 @@ impl ApiGenContext<'_> {
                 EndianSwapInput::Fields(_) => &field.name,
                 EndianSwapInput::Alias(_) => "0",
             };
+
+            let mut gen_count_variable = |count_field| {
+                let count_field = fields
+                    .iter()
+                    .find(|field| &field.name == count_field)
+                    .ok_or_else(|| {
+                        Error::Unimplemented(format!(
+                            "Unable to find variable count field {}",
+                            count_field
+                        ))
+                    })?;
+                let vla_elem_type = to_rust_vla_elem_type(&field.r#type)?;
+                writeln!(self.output_file, "        let count = if to_net {{",)?;
+                writeln!(
+                    self.output_file,
+                    "            {}::from_be(self.{})",
+                    count_field.r#type, count_field.name,
+                )?;
+                writeln!(self.output_file, "        }} else {{",)?;
+                writeln!(self.output_file, "            self.{}", count_field.name,)?;
+                writeln!(self.output_file, "        }};",)?;
+                writeln!(
+                    self.output_file,
+                    "        let array = ::std::slice::from_raw_parts_mut(std::ptr::addr_of_mut!(self.{}) as *mut {}, count as usize);",
+                    field_name, vla_elem_type,
+                )?;
+                Ok::<_, Error>(())
+            };
+
             match field.r#type.as_str() {
                 "u8" | "string" | "bool" => {
                     writeln!(
@@ -574,7 +771,7 @@ impl ApiGenContext<'_> {
                         field_name, field_name
                     )?;
                 }
-                "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => match field.size {
+                "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => match &field.size {
                     Some(FieldSize::Fixed(size)) => {
                         writeln!(self.output_file, "        for i in 0..{} {{", size)?;
                         writeln!(
@@ -584,10 +781,16 @@ impl ApiGenContext<'_> {
                         )?;
                         writeln!(self.output_file, "        }}",)?;
                     }
-                    Some(FieldSize::Variable(_)) => {
+                    Some(FieldSize::Variable(Some(count_field))) => {
+                        gen_count_variable(count_field)?;
+                        writeln!(self.output_file, "        for elem in array {{")?;
+                        writeln!(self.output_file, "            *elem = elem.to_be();",)?;
+                        writeln!(self.output_file, "        }}")?;
+                    }
+                    Some(FieldSize::Variable(None)) => {
                         return Err(Error::Unimplemented(format!(
-                            "VLA field {} for type {} not implemented",
-                            field_name, name
+                            "variable length array field {} without count",
+                            field_name
                         )));
                     }
                     None => {
@@ -605,7 +808,7 @@ impl ApiGenContext<'_> {
                         field_name, field_name
                     )?;
                 }
-                _ => match field.size {
+                _ => match &field.size {
                     Some(FieldSize::Fixed(size)) => {
                         writeln!(self.output_file, "        for i in 0..{} {{", size)?;
                         writeln!(
@@ -615,10 +818,19 @@ impl ApiGenContext<'_> {
                         )?;
                         writeln!(self.output_file, "        }}",)?;
                     }
-                    Some(FieldSize::Variable(_)) => {
+                    Some(FieldSize::Variable(Some(count_field))) => {
+                        gen_count_variable(count_field)?;
+                        writeln!(self.output_file, "        for elem in array {{")?;
+                        writeln!(
+                            self.output_file,
+                            "            ::vpp_plugin::vlibapi::EndianSwap::endian_swap(elem, to_net);",
+                        )?;
+                        writeln!(self.output_file, "        }}",)?;
+                    }
+                    Some(FieldSize::Variable(None)) => {
                         return Err(Error::Unimplemented(format!(
-                            "VLA field {} for type {} not implemented",
-                            field_name, name
+                            "variable length array field {} without count",
+                            field_name
                         )));
                     }
                     None => {
@@ -652,7 +864,7 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "#[repr(C, packed)]")?;
         writeln!(self.output_file, "pub struct {} {{", upper_camel_name)?;
         for field in t.fields() {
-            self.generate_field(t.name(), "type", field)?;
+            self.generate_field(field)?;
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
@@ -679,15 +891,34 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "pub trait Handlers {{")?;
         for service in self.parser.services() {
             let caller_upper_camel = to_upper_camel_case(service.caller());
+            let caller_message = self.parser.message(service.caller());
+            let reply_message = if service.reply() == "null" {
+                None
+            } else {
+                self.parser.message(service.reply())
+            };
+            let caller_message_vla = caller_message
+                .map(|message| message.vla().is_some())
+                .unwrap_or(false);
+            let reply_message_vla = reply_message
+                .map(|message| message.vla().is_some())
+                .unwrap_or(false);
+            // If the caller message is a VLA, then it's the callers of the trait have a responsibility to ensure the memory for any VLA VLA is valid, consistent with the count field.
+            // If the reply message is a VLA, then it's the trait implementation's responsibility to ensure the memory for any VLA in the reply is valid, consistent with the count field.
+            let unsafe_str = if caller_message_vla || reply_message_vla {
+                "unsafe "
+            } else {
+                ""
+            };
             if service.reply() == "null" {
                 writeln!(
                     self.output_file,
-                    "    fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{});",
+                    "    {}fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{});",
+                    unsafe_str,
                     service.caller(),
                     caller_upper_camel
                 )?;
             } else {
-                // TODO: support variable array type for reply
                 let reply_message = format!(
                     "::vpp_plugin::vlibapi::Message<{}>",
                     to_upper_camel_case(service.reply())
@@ -705,7 +936,8 @@ impl ApiGenContext<'_> {
                     if retval_in_reply_msg {
                         writeln!(
                             self.output_file,
-                            "    fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}, stream: {}) -> Result<{}, i32>;",
+                            "    {}fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}, stream: {}) -> Result<{}, i32>;",
+                            unsafe_str,
                             service.caller(),
                             caller_upper_camel,
                             stream_message,
@@ -714,7 +946,8 @@ impl ApiGenContext<'_> {
                     } else {
                         writeln!(
                             self.output_file,
-                            "    fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}, stream: {}) -> {};",
+                            "    {}fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}, stream: {}) -> {};",
+                            unsafe_str,
                             service.caller(),
                             caller_upper_camel,
                             stream_message,
@@ -724,7 +957,8 @@ impl ApiGenContext<'_> {
                 } else if service.stream() {
                     writeln!(
                         self.output_file,
-                        "    fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}, stream: ::vpp_plugin::vlibapi::Stream<{}>);",
+                        "    {}fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}, stream: ::vpp_plugin::vlibapi::Stream<{}>);",
+                        unsafe_str,
                         service.caller(),
                         caller_upper_camel,
                         to_upper_camel_case(service.reply()),
@@ -732,7 +966,8 @@ impl ApiGenContext<'_> {
                 } else if retval_in_reply_msg {
                     writeln!(
                         self.output_file,
-                        "    fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}) -> Result<{}, i32>;",
+                        "    {}fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}) -> Result<{}, i32>;",
+                        unsafe_str,
                         service.caller(),
                         caller_upper_camel,
                         reply_message
@@ -740,7 +975,8 @@ impl ApiGenContext<'_> {
                 } else {
                     writeln!(
                         self.output_file,
-                        "    fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}) -> {};",
+                        "    {}fn {}(vm: &::vpp_plugin::vlib::BarrierHeldMainRef, mp: &{}) -> {};",
+                        unsafe_str,
                         service.caller(),
                         caller_upper_camel,
                         reply_message

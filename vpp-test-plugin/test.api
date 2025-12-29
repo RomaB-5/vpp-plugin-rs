@@ -131,6 +131,41 @@ autoreply autoendian define test_union
   vl_api_test_address_t addr;
 };
 
+autoendian define test_variable_array_u32 {
+    u32 client_index;
+    u32 context;
+    u8 nitems;
+    u32 values[nitems];
+};
+
+autoendian define test_variable_array_u32_reply {
+    u32 context;
+    i32 retval;
+    i32 count;
+    u32 values[count];
+};
+
+autoendian autoreply define test_variable_array_u8 {
+    u32 client_index;
+    u32 context;
+    u32 nitems;
+    u8 values[nitems];
+};
+
+autoendian autoreply define test_variable_array_f64 {
+    u32 client_index;
+    u32 context;
+    u16 nitems;
+    f64 values[nitems];
+};
+
+autoendian autoreply define test_variable_array_custom {
+    u32 client_index;
+    u32 context;
+    u32 nitems;
+    vl_api_test_node_type_t values[nitems];
+};
+
 service {
   rpc test_stream_get returns test_stream_get_reply
     stream test_stream_details;

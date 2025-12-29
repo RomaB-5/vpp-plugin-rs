@@ -662,6 +662,12 @@ impl Message {
     pub fn options(&self) -> &[OptionStatement] {
         &self.options
     }
+
+    pub fn vla(&self) -> Option<&Field> {
+        self.fields
+            .last()
+            .and_then(|field| field.vla().then_some(field))
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -3,6 +3,8 @@
 //! Traits, types and helpers for working with API messages and client registrations.
 
 use std::{
+    fmt,
+    hash::{Hash, Hasher},
     marker::PhantomData,
     mem::{self, MaybeUninit},
     ops::{Deref, DerefMut},
@@ -24,7 +26,7 @@ use crate::{
 /// Important invariant:
 ///
 /// - `T` must have an alignment of 1 (e.g. by `#[repr(packed)]`)
-pub struct Message<T> {
+pub struct Message<T: ?Sized> {
     pointer: NonNull<T>,
 }
 
@@ -88,7 +90,26 @@ impl<T> Message<T> {
             }
         }
     }
+}
 
+impl Message<u8> {
+    /// Allocate a VPP message buffer `nbytes` of `u8`s initialised to 0.
+    pub fn new_bytes(nbytes: u32) -> Message<u8> {
+        // SAFETY: `vl_msg_api_alloc` returns a pointer to at least `size_of::<MaybeUninit<T>>()`
+        // bytes. Casting that pointer to `*mut MaybeUninit<T>` is valid as the buffer is
+        // uninitialised but suitably sized. It is safe to use `NonNull::new_unchecked` because
+        // the VPP allocation cannot fail and instead aborts on allocation failures.
+        unsafe {
+            let mut me = Message {
+                pointer: NonNull::new_unchecked(vl_msg_api_alloc(nbytes as i32) as *mut u8),
+            };
+            ptr::write_bytes(me.pointer.as_mut(), 0, nbytes as usize);
+            me
+        }
+    }
+}
+
+impl<T: ?Sized> Message<T> {
     /// Consume the `Message` and return the raw pointer to the underlying buffer
     ///
     /// The returned pointer becomes the caller's responsibility. The `Message` destructor will
@@ -134,7 +155,7 @@ impl<T> Message<MaybeUninit<T>> {
     }
 }
 
-impl<T> Deref for Message<T> {
+impl<T: ?Sized> Deref for Message<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -144,7 +165,7 @@ impl<T> Deref for Message<T> {
     }
 }
 
-impl<T> DerefMut for Message<T> {
+impl<T: ?Sized> DerefMut for Message<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // SAFETY: `self.pointer` was allocated by `vl_msg_api_alloc` and we hold exclusive access
         // via `&mut self`, so returning a mutable reference to the inner `T` is valid.
@@ -158,7 +179,7 @@ impl<T: Default> Default for Message<T> {
     }
 }
 
-impl<T> Drop for Message<T> {
+impl<T: ?Sized> Drop for Message<T> {
     fn drop(&mut self) {
         // SAFETY: We own the underlying buffer and the memory is considered initialised for `T`
         // at time of drop. It's therefore safe to drop the contained `T` and free the buffer
@@ -173,6 +194,51 @@ impl<T> Drop for Message<T> {
 impl<T> From<T> for Message<T> {
     fn from(value: T) -> Self {
         Self::new(value)
+    }
+}
+
+impl<T: ?Sized + PartialOrd> PartialOrd for Message<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        (**self).partial_cmp(&**other)
+    }
+}
+
+impl<T: ?Sized + Ord> Ord for Message<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (**self).cmp(&**other)
+    }
+}
+
+impl<T: ?Sized + PartialEq> PartialEq for Message<T> {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+
+impl<T: ?Sized + Eq> Eq for Message<T> {}
+
+impl<T: ?Sized + Hash> Hash for Message<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (**self).hash(state);
+    }
+}
+
+impl<T: fmt::Display + ?Sized> fmt::Display for Message<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&**self, f)
+    }
+}
+
+impl<T: fmt::Debug + ?Sized> fmt::Debug for Message<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl<T: ?Sized> fmt::Pointer for Message<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let ptr: *const T = &**self;
+        fmt::Pointer::fmt(&ptr, f)
     }
 }
 

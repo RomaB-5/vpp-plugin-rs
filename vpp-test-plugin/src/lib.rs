@@ -3,6 +3,7 @@
 
 use lazy_static::lazy_static;
 use std::{
+    collections::HashSet,
     fmt,
     net::{Ipv4Addr, Ipv6Addr},
     ptr::NonNull,
@@ -417,14 +418,46 @@ fn message_test_command(
     if *message != 0 {
         return Err(ErrorStack::msg(format!(
             "Expected *message to be 0, but is {}",
-            *message
+            message
         )));
     }
     *message = 1;
     if *message != 1 {
         return Err(ErrorStack::msg(format!(
             "Expected *message to be 1, but is {}",
-            *message
+            message
+        )));
+    }
+    // Test format implementations
+    println!(
+        "message_test_command({:p} -> {} ({:?}))",
+        message, message, message
+    );
+
+    // Test Ord & Eq implementations
+    let message_greater = vlibapi::Message::from(2u8);
+    if message_greater <= message {
+        return Err(ErrorStack::msg(format!(
+            "Expected message {} to be > {}, but it wasn't",
+            message, message_greater
+        )));
+    }
+    let message2 = vlibapi::Message::from(1u8);
+    if message2 != message {
+        return Err(ErrorStack::msg(format!(
+            "Expected message {} to be == {}, but it wasn't",
+            message, message2
+        )));
+    }
+
+    // Test Hash implementation
+    let mut message_set = HashSet::new();
+    message_set.insert(message);
+    let message = vlibapi::Message::from(1u8);
+    if !message_set.contains(&message) {
+        return Err(ErrorStack::msg(format!(
+            "Expected message {} to be in message_set {:?}, but isn't",
+            message, message_set
         )));
     }
 
@@ -438,7 +471,7 @@ fn message_test_command(
         if *message != [0u8; 256] {
             return Err(ErrorStack::msg(format!(
                 "Expected *message to be [0u8; 256], but is {:?}",
-                *message
+                message
             )));
         }
     }
@@ -447,7 +480,7 @@ fn message_test_command(
     if *message != 0 {
         return Err(ErrorStack::msg(format!(
             "Expected *message to be 0, but is {}",
-            *message
+            message
         )));
     }
 

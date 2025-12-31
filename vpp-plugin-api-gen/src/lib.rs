@@ -422,7 +422,7 @@ impl ApiGenContext<'_> {
             self.output_file,
             "#[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]",
         )?;
-        writeln!(self.output_file, "#[repr(C)]")?;
+        writeln!(self.output_file, "#[repr(C, packed)]")?;
         writeln!(
             self.output_file,
             "pub struct {}(pub {});",
@@ -459,7 +459,10 @@ impl ApiGenContext<'_> {
                 variant.id, variant.id,
             )?;
         }
-        writeln!(self.output_file, "            _ => self.0.fmt(f),",)?;
+        writeln!(self.output_file, "            _ => {{")?;
+        writeln!(self.output_file, "                let tmp = self.0;")?;
+        writeln!(self.output_file, "                tmp.fmt(f)")?;
+        writeln!(self.output_file, "            }}")?;
         writeln!(self.output_file, "        }}")?;
         writeln!(self.output_file, "    }}")?;
         writeln!(self.output_file, "}}")?;
@@ -622,20 +625,9 @@ impl ApiGenContext<'_> {
                 _ => match field.size {
                     Some(FieldSize::Fixed(size)) => {
                         writeln!(self.output_file, "        for i in 0..{} {{", size)?;
-                        // Copy out the value to a temporary since the structs are packed and so it
-                        // may not be properly aligned
                         writeln!(
                             self.output_file,
-                            "            let mut tmp = self.{}[i];",
-                            field_name
-                        )?;
-                        writeln!(
-                            self.output_file,
-                            "            ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut tmp, to_net);",
-                        )?;
-                        writeln!(
-                            self.output_file,
-                            "            self.{}[i] = tmp;",
+                            "            ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut self.{}[i], to_net);",
                             field_name
                         )?;
                         writeln!(self.output_file, "        }}",)?;
@@ -651,14 +643,9 @@ impl ApiGenContext<'_> {
                         // may not be properly aligned
                         writeln!(
                             self.output_file,
-                            "        let mut tmp = self.{};",
-                            field_name
+                            "        ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut self.{}, to_net);",
+                            field_name,
                         )?;
-                        writeln!(
-                            self.output_file,
-                            "        ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut tmp, to_net);",
-                        )?;
-                        writeln!(self.output_file, "        self.{} = tmp;", field_name)?;
                     }
                 },
             }

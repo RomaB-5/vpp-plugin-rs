@@ -598,30 +598,13 @@ impl ApiGenContext<'_> {
                         )?;
                     }
                 },
-                "f64" => match field.size {
-                    Some(FieldSize::Fixed(size)) => {
-                        writeln!(self.output_file, "        for i in 0..{} {{", size)?;
-                        writeln!(
-                            self.output_file,
-                            "            self.{}[i] = f64::from_be_bytes(self.{}[i].to_be_bytes());",
-                            field_name, field.name
-                        )?;
-                        writeln!(self.output_file, "        }}",)?;
-                    }
-                    Some(FieldSize::Variable(_)) => {
-                        return Err(Error::Unimplemented(format!(
-                            "VLA field {} for type {} not implemented",
-                            field_name, name
-                        )));
-                    }
-                    None => {
-                        writeln!(
-                            self.output_file,
-                            "        self.{} = f64::from_be_bytes(self.{}.to_be_bytes());",
-                            field_name, field.name
-                        )?;
-                    }
-                },
+                "f64" => {
+                    writeln!(
+                        self.output_file,
+                        "        // self.{} = self.{} (no-op according to VPP API)",
+                        field_name, field_name
+                    )?;
+                }
                 _ => match field.size {
                     Some(FieldSize::Fixed(size)) => {
                         writeln!(self.output_file, "        for i in 0..{} {{", size)?;

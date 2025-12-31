@@ -19,6 +19,8 @@ use crate::{
     vlib::BarrierHeldMainRef,
 };
 
+pub mod num_unaligned;
+
 /// An owned VPP message buffer containing a `T`.
 ///
 /// The message can be sent to a client using [`Registration::send_message`].

@@ -333,7 +333,7 @@ impl vlib::node::Node for TestX4Node {
                     return TestNextNode::Drop.into();
                 }
 
-                let ip_udp: *const IpUdpHeader = b0.current_ptr_mut() as *const IpUdpHeader;
+                let ip_udp = b0.current_ptr_mut() as *const IpUdpHeader;
 
                 match u16::from_be((*ip_udp).udp.dst_port) {
                     1 => {

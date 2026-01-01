@@ -42,8 +42,6 @@ use vpp_plugin::{
     ErrorCounters, NextNodes,
 };
 
-use crate::example_api::ExampleEnableDisableReply;
-
 mod example_api {
     include!(concat!(env!("OUT_DIR"), "/src/example_api.rs"));
 }
@@ -199,11 +197,7 @@ impl example_api::Handlers for ApiHandler {
             EXAMPLE_FEAT.disable(vm, sw_if_index)?;
         }
 
-        Ok(ExampleEnableDisableReply {
-            context: mp.context,
-            ..Default::default()
-        }
-        .into())
+        Ok(Default::default())
     }
 }
 

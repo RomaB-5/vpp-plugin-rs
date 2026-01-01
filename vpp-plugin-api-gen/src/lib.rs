@@ -60,8 +60,8 @@ use thiserror::Error;
 use crate::{
     json::generate_json,
     parser::{
-        Alias, ApiParser, Enum, Field, FieldSize, Message, Type, Union, VL_API_PREFIX,
-        VL_API_SUFFIX,
+        Alias, ApiParser, CountDescriptor, Enum, Field, FieldSize, Message, Type, Union,
+        VL_API_PREFIX, VL_API_SUFFIX,
     },
 };
 
@@ -261,6 +261,82 @@ impl ApiGenContext<'_> {
         Ok(())
     }
 
+    fn generate_debug_trait(&mut self, name: &str, fields: &[Field]) -> Result<(), Error> {
+        let upper_camel_name = to_upper_camel_case(name);
+
+        writeln!(
+            self.output_file,
+            "impl ::std::fmt::Debug for {} {{",
+            upper_camel_name
+        )?;
+        // Suppress warnings about tmp__vl_msg_id (and any similar)
+        writeln!(self.output_file, "    #[allow(non_snake_case)]")?;
+        writeln!(
+            self.output_file,
+            "    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {{"
+        )?;
+        for field in fields {
+            if !matches!(field.size, Some(FieldSize::Variable(_))) {
+                writeln!(
+                    self.output_file,
+                    "        let tmp_{} = self.{};",
+                    field.name, field.name
+                )?;
+            }
+        }
+        writeln!(
+            self.output_file,
+            "        f.debug_struct(\"{}\")",
+            upper_camel_name
+        )?;
+        for field in fields {
+            if !matches!(field.size, Some(FieldSize::Variable(_))) {
+                writeln!(
+                    self.output_file,
+                    "            .field(\"{}\", &tmp_{})",
+                    field.name, field.name
+                )?;
+            }
+        }
+        writeln!(self.output_file, "            .finish_non_exhaustive()")?;
+        writeln!(self.output_file, "    }}")?;
+        writeln!(self.output_file, "}}")?;
+        writeln!(self.output_file)?;
+
+        Ok(())
+    }
+
+    fn generate_vla_accessors(&mut self, count_field: &str, field: &Field) -> Result<(), Error> {
+        let vla_elem_type = to_rust_vla_elem_type(&field.r#type)?;
+        writeln!(self.output_file, "    #[allow(dead_code)]")?;
+        writeln!(
+            self.output_file,
+            "    pub unsafe fn {}(&self) -> &[{}] {{",
+            field.name, vla_elem_type
+        )?;
+        writeln!(
+            self.output_file,
+            "        ::std::slice::from_raw_parts(std::ptr::addr_of!(self.{}).cast(), self.{} as usize)",
+            field.name, count_field
+        )?;
+        writeln!(self.output_file, "    }}")?;
+        writeln!(self.output_file)?;
+        writeln!(self.output_file, "    #[allow(dead_code)]")?;
+        writeln!(
+            self.output_file,
+            "    pub unsafe fn {}_mut(&mut self) -> &mut [{}] {{",
+            field.name, vla_elem_type
+        )?;
+        writeln!(
+            self.output_file,
+            "        std::slice::from_raw_parts_mut(std::ptr::addr_of_mut!(self.{}).cast(), self.{} as usize)",
+            field.name, count_field
+        )?;
+        writeln!(self.output_file, "    }}")?;
+
+        Ok(())
+    }
+
     fn generate_message(&mut self, id: usize, message: &Message) -> Result<(), Error> {
         let upper_camel_name = to_upper_camel_case(message.name());
 
@@ -271,8 +347,10 @@ impl ApiGenContext<'_> {
                 comment.replace("\"", "\\\"")
             )?;
         }
-        let opt_derives = if message.manual_print() || message.vla().is_some() {
+        let opt_derives = if message.manual_print() || message.vla_non_recursive().is_some() {
             ""
+        } else if message.vla(self.parser).is_some() {
+            "Debug, "
         } else {
             "Debug, PartialEq, "
         };
@@ -291,36 +369,11 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "    pub fn msg_id() -> u16 {{")?;
         writeln!(self.output_file, "        msg_id_base() + Self::MSG_ID")?;
         writeln!(self.output_file, "    }}")?;
-        if let Some(field) = message.vla()
+        if let Some((field, _)) = message.vla(self.parser)
             && let Some(FieldSize::Variable(Some(count_field))) = &field.size
         {
-            let vla_elem_type = to_rust_vla_elem_type(&field.r#type)?;
             writeln!(self.output_file)?;
-            writeln!(self.output_file, "    #[allow(dead_code)]")?;
-            writeln!(
-                self.output_file,
-                "    pub unsafe fn {}(&self) -> &[{}] {{",
-                field.name, vla_elem_type
-            )?;
-            writeln!(
-                self.output_file,
-                "        ::std::slice::from_raw_parts(std::ptr::addr_of!(self.{}).cast(), self.{} as usize)",
-                field.name, count_field
-            )?;
-            writeln!(self.output_file, "    }}")?;
-            writeln!(self.output_file)?;
-            writeln!(self.output_file, "    #[allow(dead_code)]")?;
-            writeln!(
-                self.output_file,
-                "    pub unsafe fn {}_mut(&mut self) -> &mut [{}] {{",
-                field.name, vla_elem_type
-            )?;
-            writeln!(
-                self.output_file,
-                "        std::slice::from_raw_parts_mut(std::ptr::addr_of_mut!(self.{}).cast(), self.{} as usize)",
-                field.name, count_field
-            )?;
-            writeln!(self.output_file, "    }}")?;
+            self.generate_vla_accessors(count_field, field)?;
             writeln!(self.output_file)?;
             writeln!(self.output_file, "    #[allow(dead_code)]")?;
             if let Some(count_field) = message
@@ -389,45 +442,8 @@ impl ApiGenContext<'_> {
 
         // Manually implement fmt::Debug so that the zero-length (but actually variable-length)
         // field isn't printed to avoid misleading anyone looking at the output
-        if message.vla().is_some() {
-            writeln!(
-                self.output_file,
-                "impl ::std::fmt::Debug for {} {{",
-                upper_camel_name
-            )?;
-            // Suppress warnings about tmp__vl_msg_id (and any similar)
-            writeln!(self.output_file, "    #[allow(non_snake_case)]")?;
-            writeln!(
-                self.output_file,
-                "    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {{"
-            )?;
-            for field in message.fields() {
-                if !matches!(field.size, Some(FieldSize::Variable(_))) {
-                    writeln!(
-                        self.output_file,
-                        "            let tmp_{} = self.{};",
-                        field.name, field.name
-                    )?;
-                }
-            }
-            writeln!(
-                self.output_file,
-                "        f.debug_struct(\"{}\")",
-                upper_camel_name
-            )?;
-            for field in message.fields() {
-                if !matches!(field.size, Some(FieldSize::Variable(_))) {
-                    writeln!(
-                        self.output_file,
-                        "            .field(\"{}\", &tmp_{})",
-                        field.name, field.name
-                    )?;
-                }
-            }
-            writeln!(self.output_file, "            .finish_non_exhaustive()")?;
-            writeln!(self.output_file, "    }}")?;
-            writeln!(self.output_file, "}}")?;
-            writeln!(self.output_file)?;
+        if message.vla_non_recursive().is_some() {
+            self.generate_debug_trait(message.name(), message.fields())?;
         }
 
         writeln!(
@@ -468,13 +484,17 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "    s.into_raw()")?;
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
-        if let Some(field) = message.vla()
-            && let Some(FieldSize::Variable(Some(count_field))) = &field.size
-            && let Some(count_field) = message
-                .fields()
-                .iter()
-                .find(|field| &field.name == count_field)
-        {
+        if let Some((field, count_descr)) = message.vla(self.parser) {
+            let CountDescriptor::Field {
+                path: count_path,
+                r#type: count_type,
+            } = count_descr
+            else {
+                return Err(Error::Unimplemented(format!(
+                    "string type VLA in message {} not supported",
+                    message.name()
+                )));
+            };
             write!(self.output_file, "pub ",)?;
             writeln!(
                 self.output_file,
@@ -482,13 +502,13 @@ impl ApiGenContext<'_> {
                 message.name(),
                 upper_camel_name
             )?;
-            match count_field.r#type.as_str() {
+            match count_type.as_str() {
                 "u8" => {
                     writeln!(
                         self.output_file,
                         "    ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword + (*a).{} as ::vpp_plugin::bindings::uword * ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
                         upper_camel_name,
-                        count_field.name,
+                        count_path.join("."),
                         to_rust_type(&field.r#type)?,
                     )?;
                 }
@@ -497,15 +517,15 @@ impl ApiGenContext<'_> {
                         self.output_file,
                         "    ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword + {}::from_be((*a).{}) as ::vpp_plugin::bindings::uword * ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
                         upper_camel_name,
-                        to_rust_type(&count_field.r#type)?,
-                        count_field.name,
+                        to_rust_type(&count_type)?,
+                        count_path.join("."),
                         to_rust_type(&field.r#type)?,
                     )?;
                 }
                 _ => {
                     return Err(Error::Unimplemented(format!(
                         "Unexpected type of variable-length array count field {} in message {}",
-                        count_field.name,
+                        count_path.join("."),
                         message.name()
                     )));
                 }
@@ -857,6 +877,8 @@ impl ApiGenContext<'_> {
 
         let opt_derives = if t.manual_print() {
             ""
+        } else if t.vla_non_recursive().is_some() {
+            "Default, "
         } else {
             "Debug, PartialEq, Default, "
         };
@@ -868,14 +890,24 @@ impl ApiGenContext<'_> {
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
+
+        if let Some((field, _)) = t.vla(self.parser)
+            && let Some(FieldSize::Variable(Some(count_field))) = &field.size
+        {
+            writeln!(self.output_file, "impl {} {{", upper_camel_name)?;
+            self.generate_vla_accessors(count_field, field)?;
+            writeln!(self.output_file, "}}")?;
+            writeln!(self.output_file)?;
+        }
+
+        // Manually implement fmt::Debug so that the zero-length (but actually variable-length)
+        // field isn't printed to avoid misleading anyone looking at the output
+        if t.vla_non_recursive().is_some() {
+            self.generate_debug_trait(t.name(), t.fields())?;
+        }
+
         if !t.manual_endian() {
             self.generate_endian_swap(t.name(), EndianSwapInput::Fields(t.fields()))?;
-        }
-        if t.vla() {
-            return Err(Error::Unimplemented(format!(
-                "VLA for type {} not implemented",
-                t.name()
-            )));
         }
         Ok(())
     }
@@ -898,10 +930,10 @@ impl ApiGenContext<'_> {
                 self.parser.message(service.reply())
             };
             let caller_message_vla = caller_message
-                .map(|message| message.vla().is_some())
+                .map(|message| message.vla(self.parser).is_some())
                 .unwrap_or(false);
             let reply_message_vla = reply_message
-                .map(|message| message.vla().is_some())
+                .map(|message| message.vla(self.parser).is_some())
                 .unwrap_or(false);
             // If the caller message is a VLA, then it's the callers of the trait have a responsibility to ensure the memory for any VLA VLA is valid, consistent with the count field.
             // If the reply message is a VLA, then it's the trait implementation's responsibility to ensure the memory for any VLA in the reply is valid, consistent with the count field.

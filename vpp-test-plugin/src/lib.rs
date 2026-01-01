@@ -859,6 +859,19 @@ impl test_api::Handlers for ApiHandler {
             Ok(Default::default())
         }
     }
+
+    unsafe fn test_variable_array_in_type(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestVariableArrayInType,
+    ) -> Result<vlibapi::Message<test_api::TestVariableArrayInTypeReply>, i32> {
+        unsafe {
+            println!("test_variable_array_u32({:?}, {:?})", mp, mp.field.values());
+            if mp.field.values() != [42, 0xdead, 0, 0xffff] {
+                return Err(VNET_ERR_INVALID_ARGUMENT.into());
+            }
+            Ok(Default::default())
+        }
+    }
 }
 
 #[vlib_init_function]

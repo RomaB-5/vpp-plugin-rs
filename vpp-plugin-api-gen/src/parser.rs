@@ -185,6 +185,16 @@ impl OptionStatement {
     }
 }
 
+pub enum CountDescriptor {
+    Field {
+        /// The path to the count field from outermost field to innermost field
+        path: Vec<String>,
+        /// The type of the count field
+        r#type: String,
+    },
+    String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldSize {
     Variable(Option<String>),
@@ -200,8 +210,37 @@ pub struct Field {
 }
 
 impl Field {
-    fn vla(&self) -> bool {
-        matches!(self.size, Some(FieldSize::Variable(_)))
+    /// Returns optional description of the count
+    fn vla(&self, parser: &ApiParser, other_fields: &[Field]) -> Option<CountDescriptor> {
+        if matches!(&self.size, Some(FieldSize::Variable(None))) && self.r#type == "string" {
+            return Some(CountDescriptor::String);
+        }
+        if let Some(FieldSize::Variable(Some(count_field))) = &self.size
+            && let Some(count_field) = other_fields.iter().find(|field| &field.name == count_field)
+        {
+            return Some(CountDescriptor::Field {
+                path: vec![count_field.name.clone()],
+                r#type: count_field.r#type.clone(),
+            });
+        }
+        if let Some(type_name) = self.r#type.strip_prefix(VL_API_PREFIX)
+            && let Some(type_name) = type_name.strip_suffix(VL_API_SUFFIX)
+            && let Some(type_entry) = parser.global_types_by_name.get(type_name)
+        {
+            let count_descr = type_entry.vla(parser)?;
+            match count_descr {
+                CountDescriptor::Field { path, r#type } => {
+                    let mut new_count_path = vec![self.name.clone()];
+                    new_count_path.extend(path);
+                    return Some(CountDescriptor::Field {
+                        path: new_count_path,
+                        r#type,
+                    });
+                }
+                CountDescriptor::String => return Some(CountDescriptor::String),
+            }
+        }
+        None
     }
 }
 
@@ -526,11 +565,37 @@ pub enum TypeDetails {
     },
 }
 
+impl TypeDetails {
+    /// Returns optional description of the count
+    fn vla(&self, parser: &ApiParser) -> Option<CountDescriptor> {
+        let fields = match self {
+            Self::TypedefBlock { fields } => fields,
+            Self::Typedef { r#type, size } => {
+                if matches!(size, Some(FieldSize::Variable(None))) && r#type == "string" {
+                    return Some(CountDescriptor::String);
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        };
+
+        let field = fields.last()?;
+        field.vla(parser, fields)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeEntry {
     crc: crc32fast::Hasher,
-    vla: bool,
     pub details: TypeDetails,
+}
+
+impl TypeEntry {
+    /// Returns optional description of the count
+    fn vla(&self, parser: &ApiParser) -> Option<CountDescriptor> {
+        self.details.vla(parser)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -663,10 +728,18 @@ impl Message {
         &self.options
     }
 
-    pub fn vla(&self) -> Option<&Field> {
+    /// Returns optional tuple of VLA field with description of count variable
+    pub fn vla(&self, parser: &ApiParser) -> Option<(&Field, CountDescriptor)> {
+        self.fields.last().and_then(|field| {
+            let count_descr = field.vla(parser, &self.fields)?;
+            Some((field, count_descr))
+        })
+    }
+
+    pub fn vla_non_recursive(&self) -> Option<&Field> {
         self.fields
             .last()
-            .and_then(|field| field.vla().then_some(field))
+            .filter(|field| matches!(field.size, Some(FieldSize::Variable(Some(_)))))
     }
 }
 
@@ -703,7 +776,6 @@ pub struct Type {
     fields: Vec<Field>,
     _options: Vec<OptionStatement>,
     flags: Vec<Flag>,
-    vla: bool,
 }
 
 impl Type {
@@ -728,8 +800,18 @@ impl Type {
         self.flags.contains(&Flag::ManualEndian)
     }
 
-    pub fn vla(&self) -> bool {
-        self.vla
+    pub fn vla_non_recursive(&self) -> Option<&Field> {
+        self.fields
+            .last()
+            .filter(|field| matches!(field.size, Some(FieldSize::Variable(Some(_)))))
+    }
+
+    /// Returns optional tuple of VLA field with description of count variable
+    pub fn vla(&self, parser: &ApiParser) -> Option<(&Field, CountDescriptor)> {
+        self.fields.last().and_then(|field| {
+            let count_descr = field.vla(parser, &self.fields)?;
+            Some((field, count_descr))
+        })
     }
 }
 
@@ -852,18 +934,7 @@ impl ApiParser {
                 return Err(Error::StringNotArray(field.name.clone()));
             }
 
-            vla = field.vla();
-            if let Some(type_name) = field.r#type.strip_prefix(VL_API_PREFIX)
-                && let Some(type_name) = type_name.strip_suffix(VL_API_SUFFIX)
-            {
-                if let Some(type_entry) = self.global_types_by_name.get(type_name) {
-                    vla = type_entry.vla;
-                } else {
-                    return Err(Error::TypeResolution {
-                        type_name: type_name.to_string(),
-                    });
-                }
-            }
+            vla = field.vla(self, fields).is_some();
             if vla && is_union {
                 return Err(Error::VlaFieldUnion(field.name.clone(), name.to_string()));
             }
@@ -925,7 +996,7 @@ impl ApiParser {
                     fields,
                     flags,
                 } => {
-                    let vla = self.validate_vla(&name, &fields, false)?;
+                    self.validate_vla(&name, &fields, false)?;
                     let crc = self.crc_for_fields(&fields, false)?;
                     if !import {
                         let un = Type {
@@ -933,7 +1004,6 @@ impl ApiParser {
                             _options: options,
                             fields: fields.clone(),
                             flags,
-                            vla,
                         };
                         self.types.push(un);
                     }
@@ -941,7 +1011,6 @@ impl ApiParser {
                         name,
                         TypeEntry {
                             crc,
-                            vla,
                             details: TypeDetails::TypedefBlock { fields },
                         },
                     )
@@ -966,7 +1035,6 @@ impl ApiParser {
                         field.name.clone(),
                         TypeEntry {
                             crc,
-                            vla: field.vla(),
                             details: TypeDetails::Typedef {
                                 r#type: field.r#type,
                                 size: field.size,
@@ -997,8 +1065,6 @@ impl ApiParser {
                         name,
                         TypeEntry {
                             crc,
-                            // validate_vla ensures this
-                            vla: false,
                             details: TypeDetails::Union { fields },
                         },
                     )
@@ -1019,14 +1085,7 @@ impl ApiParser {
                         });
                     }
                     let details = TypeDetails::Enum { size, variants };
-                    (
-                        name,
-                        TypeEntry {
-                            crc,
-                            vla: false,
-                            details,
-                        },
-                    )
+                    (name, TypeEntry { crc, details })
                 }
                 Statement::EnumFlag {
                     name,
@@ -1044,14 +1103,7 @@ impl ApiParser {
                         });
                     }
                     let details = TypeDetails::EnumFlag { size, variants };
-                    (
-                        name,
-                        TypeEntry {
-                            crc,
-                            vla: false,
-                            details,
-                        },
-                    )
+                    (name, TypeEntry { crc, details })
                 }
                 Statement::Import(import_file) => {
                     if !import {

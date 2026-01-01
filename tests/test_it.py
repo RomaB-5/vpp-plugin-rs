@@ -485,6 +485,15 @@ class IntegrationTestCase(VppTestCase):
                 'values': [test_node_type.TEST_NODE_TYPE_X1, test_node_type.TEST_NODE_TYPE_X4],
             },
         )
+        self.vapi.api(
+            self.vapi.papi.test_variable_array_in_type,
+            {
+                'field': {
+                    'nitems': 4,
+                    'values': [42, 0xdead, 0, 0xffff],
+                }
+            },
+        )
 
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

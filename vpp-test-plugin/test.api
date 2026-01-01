@@ -166,6 +166,17 @@ autoendian autoreply define test_variable_array_custom {
     vl_api_test_node_type_t values[nitems];
 };
 
+typedef test_variable_array_typedef {
+    i16 nitems;
+    u16 values[nitems];
+};
+
+autoendian autoreply define test_variable_array_in_type {
+    u32 client_index;
+    u32 context;
+    vl_api_test_variable_array_typedef_t field;
+};
+
 service {
   rpc test_stream_get returns test_stream_get_reply
     stream test_stream_details;

@@ -660,11 +660,7 @@ impl test_api::Handlers for ApiHandler {
             _ => return Err(VNET_ERR_INVALID_ARGUMENT.into()),
         }
 
-        Ok(test_api::TestEnableDisableReply {
-            context: mp.context,
-            ..Default::default()
-        }
-        .into())
+        Ok(Default::default())
     }
 
     fn test_type_in_message(
@@ -674,11 +670,7 @@ impl test_api::Handlers for ApiHandler {
         if mp.test_type.field1 != 42 {
             return Err(VNET_ERR_INVALID_ARGUMENT.into());
         }
-        Ok(test_api::TestTypeInMessageReply {
-            context: mp.context,
-            ..Default::default()
-        }
-        .into())
+        Ok(Default::default())
     }
 
     fn test_array(
@@ -700,11 +692,7 @@ impl test_api::Handlers for ApiHandler {
         if mp.array4[0] != 0.0 || mp.array4[1] != 42.0 {
             return Err(VNET_ERR_INVALID_ARGUMENT.into());
         }
-        Ok(test_api::TestArrayReply {
-            context: mp.context,
-            ..Default::default()
-        }
-        .into())
+        Ok(Default::default())
     }
 
     fn test_response(
@@ -773,7 +761,7 @@ impl test_api::Handlers for ApiHandler {
             }
             .into(),
         );
-        Ok(test_api::TestStreamGetReply::default().into())
+        Ok(Default::default())
     }
 
     fn test_typedef(
@@ -783,7 +771,7 @@ impl test_api::Handlers for ApiHandler {
         if mp.addr.0 .0 != [1, 2, 3, 4] {
             return Err(VNET_ERR_INVALID_ARGUMENT.into());
         }
-        Ok(test_api::TestTypedefReply::default().into())
+        Ok(Default::default())
     }
 
     fn test_union(
@@ -804,7 +792,7 @@ impl test_api::Handlers for ApiHandler {
                 return Err(VNET_ERR_INVALID_ARGUMENT.into());
             }
         }
-        Ok(test_api::TestUnionReply::default().into())
+        Ok(Default::default())
     }
 }
 

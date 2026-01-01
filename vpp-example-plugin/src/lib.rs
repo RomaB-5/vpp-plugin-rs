@@ -121,7 +121,7 @@ impl vlib::node::Node for ExampleNode {
                 node: &mut vlib::NodeRuntimeRef<ExampleNode>,
                 b0: &mut vlib::BufferRef<()>,
             ) -> FeatureNextNode<ExampleNextNode> {
-                let ip: *const ip4_header_t = b0.current_ptr_mut() as *const ip4_header_t;
+                let ip = b0.current_ptr_mut() as *const ip4_header_t;
                 if (*ip).__bindgen_anon_1.protocol == IP_PROTOCOL_ICMP {
                     b0.set_error(node, ExampleErrorCounter::Drop);
                     if unlikely(b0.flags().contains(vlib::BufferFlags::IS_TRACED)) {

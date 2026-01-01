@@ -3,12 +3,15 @@
 //! Traits, types and helpers for working with API messages and client registrations.
 
 use std::{
+    borrow::Cow,
     fmt,
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem::{self, MaybeUninit},
     ops::{Deref, DerefMut},
     ptr::{self, NonNull},
+    slice,
+    str::Utf8Error,
 };
 
 use crate::{
@@ -384,5 +387,286 @@ impl<'scope, T: EndianSwap> Stream<'scope, T> {
     pub unsafe fn send_message(&mut self, mut message: Message<T>) {
         message.endian_swap(true);
         self.send_message_ne(message);
+    }
+}
+
+#[repr(C, packed)]
+#[derive(Copy, Clone, Default)]
+/// A string type used in VPP API messages.
+///
+/// This represents a variable-length string with a length prefix,
+/// commonly used in VPP API message structures.
+///
+/// Note that copying/cloning `ApiString` objects will not copy/clone the contents of the string.
+pub struct ApiString {
+    length: u32,
+    buf: [u8; 0],
+}
+
+impl ApiString {
+    /// Returns the length of the string in bytes.
+    pub const fn len(&self) -> u32 {
+        self.length
+    }
+
+    /// Returns `true` if the string has a length of zero.
+    pub const fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
+    /// Returns a byte slice of the string's contents.
+    pub fn as_bytes(&self) -> &[u8] {
+        // SAFETY: The buffer memory is valid and initialised for at least self.length bytes.
+        unsafe {
+            slice::from_raw_parts(
+                std::ptr::addr_of!(self.buf) as *const u8,
+                self.length as usize,
+            )
+        }
+    }
+
+    /// Returns a mutable byte slice of the string's contents.
+    fn as_bytes_mut(&mut self) -> &mut [u8] {
+        // SAFETY: The buffer memory is valid and initialised for at least self.length bytes.
+        unsafe {
+            slice::from_raw_parts_mut(
+                std::ptr::addr_of_mut!(self.buf) as *mut u8,
+                self.length as usize,
+            )
+        }
+    }
+
+    /// Converts the string to a `&str` slice.
+    ///
+    /// If the contents of the `ApiString` are valid UTF-8 data, this
+    /// function will return the corresponding `&[str]` slice. Otherwise,
+    /// it will return an error with details of where UTF-8 validation failed.
+    pub fn to_str(&self) -> Result<&str, Utf8Error> {
+        str::from_utf8(self.as_bytes())
+    }
+
+    /// Converts the string to a `Cow<str>`, replacing invalid UTF-8 sequences with �.
+    pub fn to_string_lossy(&self) -> Cow<'_, str> {
+        String::from_utf8_lossy(self.as_bytes())
+    }
+
+    /// Sets the length of the string in bytes.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the underlying buffer has at least `length` bytes of valid
+    /// memory and is initialised.
+    pub unsafe fn set_len(&mut self, length: u32) {
+        self.length = length;
+    }
+
+    /// Copies the contents of the given string into this `ApiString`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the length of the `ApiString` is different to the length of the string in bytes.
+    pub fn copy_from_str(&mut self, s: &str) {
+        self.as_bytes_mut().copy_from_slice(s.as_bytes());
+    }
+}
+
+impl std::fmt::Debug for ApiString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.to_string_lossy(), f)
+    }
+}
+
+impl EndianSwap for ApiString {
+    unsafe fn endian_swap(&mut self, _to_net: bool) {
+        self.length = self.length.to_be();
+        // No endian swap necessary for self.buf
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+/// A string type used in VPP API messages.
+///
+/// This represents a fixed-length, nul-terminated string,
+/// commonly used in VPP API message structures.
+pub struct ApiFixedString<const N: usize> {
+    buf: [u8; N],
+}
+
+impl<const N: usize> ApiFixedString<N> {
+    /// Returns the length of the string in bytes.
+    pub const fn len(&self) -> usize {
+        let mut len = 0;
+        while self.buf[len] != 0 {
+            len += 1;
+        }
+        len
+    }
+
+    /// Returns `true` if the string has a length of zero.
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns a byte slice of the string's contents not including the nul-terminator.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.buf[..self.len()]
+    }
+
+    /// Converts the string to a `&str` slice.
+    ///
+    /// If the contents of the `ApiFixedString` are valid UTF-8 data, this
+    /// function will return the corresponding `&[str]` slice. Otherwise,
+    /// it will return an error with details of where UTF-8 validation failed.
+    pub fn to_str(&self) -> Result<&str, Utf8Error> {
+        str::from_utf8(self.as_bytes())
+    }
+
+    /// Converts the string to a `Cow<str>`, replacing invalid UTF-8 sequences with �.
+    pub fn to_string_lossy(&self) -> Cow<'_, str> {
+        String::from_utf8_lossy(self.as_bytes())
+    }
+
+    /// Copies the contents of the given string into this `ApiFixedString`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the string exceeds the capacity of the fixed buffer.
+    pub fn copy_from_str(&mut self, s: &str) {
+        let bytes = s.as_bytes();
+        self.buf[0..bytes.len()].copy_from_slice(bytes);
+        // Set any remaining elements to 0 since they are serialised to the wire and so we don't
+        // want any stale data, plus the first 0 acts as a nul-terminator.
+        if bytes.len() + 1 < self.buf.len() {
+            self.buf[bytes.len()..].fill(0);
+        }
+    }
+}
+
+impl<const N: usize> std::fmt::Debug for ApiFixedString<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.to_string_lossy(), f)
+    }
+}
+
+impl<const N: usize> EndianSwap for ApiFixedString<N> {
+    unsafe fn endian_swap(&mut self, _to_net: bool) {
+        // No endian swap necessary for self.buf
+    }
+}
+
+impl<const N: usize> Default for ApiFixedString<N> {
+    fn default() -> Self {
+        Self { buf: [0; N] }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::borrow::Cow;
+
+    #[test]
+    fn test_fixed_string_default() {
+        let s: ApiFixedString<10> = Default::default();
+        assert_eq!(s.len(), 0);
+        assert!(s.is_empty());
+        assert_eq!(s.as_bytes(), &[]);
+        assert_eq!(s.to_string_lossy(), Cow::Borrowed(""));
+    }
+
+    #[test]
+    fn test_fixed_string_copy_from_str() {
+        let mut s: ApiFixedString<10> = Default::default();
+        s.copy_from_str("hello");
+        assert_eq!(s.len(), 5);
+        assert!(!s.is_empty());
+        assert_eq!(s.as_bytes(), b"hello");
+        assert_eq!(s.to_string_lossy(), Cow::Borrowed("hello"));
+    }
+
+    #[test]
+    fn test_fixed_string_copy_from_str_with_padding() {
+        let mut s: ApiFixedString<10> = Default::default();
+        s.copy_from_str("hi");
+        assert_eq!(s.len(), 2);
+        assert_eq!(s.as_bytes(), b"hi");
+        // Check that the rest is zeroed
+        assert_eq!(s.buf[2..], [0; 8]);
+    }
+
+    #[test]
+    fn test_fixed_string_copy_from_str_empty() {
+        let mut s: ApiFixedString<10> = Default::default();
+        s.copy_from_str("");
+        assert_eq!(s.len(), 0);
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_fixed_string_copy_from_str_max_length() {
+        let mut s: ApiFixedString<5> = Default::default();
+        s.copy_from_str("abcd"); // 4 chars, should fit with nul
+        assert_eq!(s.len(), 4);
+        assert_eq!(s.as_bytes(), b"abcd");
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_fixed_string_copy_from_str_too_long() {
+        let mut s: ApiFixedString<5> = Default::default();
+        s.copy_from_str("abcdef"); // 6 chars, too long
+    }
+
+    #[test]
+    fn test_fixed_string_to_str_valid_utf8() {
+        let mut s: ApiFixedString<10> = Default::default();
+        s.copy_from_str("hello");
+        assert_eq!(s.to_str().unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_fixed_string_to_str_invalid_utf8() {
+        let mut s: ApiFixedString<10> = Default::default();
+        // Manually set invalid UTF-8
+        s.buf[0] = 0xff;
+        s.buf[1] = 0xfe;
+        s.buf[2] = 0;
+        assert!(s.to_str().is_err());
+    }
+
+    #[test]
+    fn test_fixed_string_to_string_lossy_invalid_utf8() {
+        let mut s: ApiFixedString<10> = Default::default();
+        s.copy_from_str("hello");
+        assert_eq!(s.to_string_lossy(), "hello");
+
+        // Invalid UTF-8
+        s.buf[0] = 0xff;
+        s.buf[1] = 0;
+        assert_eq!(s.to_string_lossy(), "�");
+    }
+
+    #[test]
+    fn test_fixed_string_debug() {
+        let mut s: ApiFixedString<10> = Default::default();
+        s.copy_from_str("test");
+        assert_eq!(format!("{:?}", s), "\"test\"");
+    }
+
+    #[test]
+    fn test_fixed_string_partialeq() {
+        // Fill part of the rest of the string to ensure it has no effect when a shorter string is
+        // copied over
+        let mut s1: ApiFixedString<10> = Default::default();
+        s1.copy_from_str("test");
+        assert_eq!(s1.to_string_lossy(), "test");
+
+        s1.copy_from_str("te");
+
+        let mut s2: ApiFixedString<10> = Default::default();
+        s2.copy_from_str("te");
+
+        assert_eq!(s1, s2);
     }
 }

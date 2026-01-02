@@ -104,10 +104,6 @@ fn to_rust_type(r#type: &str) -> Result<String, Error> {
         } else {
             r#type.to_string()
         }
-    } else if r#type == "string" {
-        return Err(Error::Unimplemented(
-            "string type not implemented".to_string(),
-        ));
     } else {
         r#type.to_string()
     })
@@ -231,6 +227,28 @@ struct ApiGenContext<'a> {
 
 impl ApiGenContext<'_> {
     fn generate_field(&mut self, field: &Field) -> Result<(), Error> {
+        if field.r#type == "string" {
+            match &field.size {
+                Some(FieldSize::Fixed(size)) => {
+                    writeln!(
+                        self.output_file,
+                        "    pub {}: ::vpp_plugin::vlibapi::ApiFixedString<{}>,",
+                        field.name, size,
+                    )?;
+                    return Ok(());
+                }
+                Some(FieldSize::Variable(None)) => {
+                    writeln!(
+                        self.output_file,
+                        "    pub {}: ::vpp_plugin::vlibapi::ApiString,",
+                        field.name,
+                    )?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
         match &field.size {
             Some(FieldSize::Fixed(size)) => {
                 writeln!(
@@ -369,52 +387,75 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "    pub fn msg_id() -> u16 {{")?;
         writeln!(self.output_file, "        msg_id_base() + Self::MSG_ID")?;
         writeln!(self.output_file, "    }}")?;
-        if let Some((field, _)) = message.vla(self.parser)
-            && let Some(FieldSize::Variable(Some(count_field))) = &field.size
-        {
+        if let Some((field, count_descr)) = message.vla(self.parser) {
             writeln!(self.output_file)?;
-            self.generate_vla_accessors(count_field, field)?;
-            writeln!(self.output_file)?;
-            writeln!(self.output_file, "    #[allow(dead_code)]")?;
-            if let Some(count_field) = message
-                .fields()
-                .iter()
-                .find(|field| &field.name == count_field)
-            {
-                writeln!(
-                    self.output_file,
-                    "    pub fn new_message({}: {}) -> ::vpp_plugin::vlibapi::Message<Self> {{",
-                    count_field.name, count_field.r#type
-                )?;
-                // Avoid clippy::unnecessary_cast warning by only casting when the count field isn't a u32
-                let count_expr = if count_field.r#type == "u32" {
-                    count_field.name.clone()
-                } else {
-                    format!("{} as u32", count_field.name)
-                };
-                writeln!(
-                    self.output_file,
-                    "    let size = ::std::mem::size_of::<Self>() as u32 + {} * ::std::mem::size_of::<{}>() as u32;",
-                    count_expr,
-                    to_rust_type(&field.r#type)?,
-                )?;
-                writeln!(
-                    self.output_file,
-                    "        let mut message = unsafe {{ ::std::mem::transmute::<::vpp_plugin::vlibapi::Message<u8>, ::vpp_plugin::vlibapi::Message<Self>>(::vpp_plugin::vlibapi::Message::new_bytes(size)) }};",
-                )?;
-                writeln!(
-                    self.output_file,
-                    "        message._vl_msg_id = Self::msg_id();",
-                )?;
-                writeln!(
-                    self.output_file,
-                    "        message.{} = {};",
-                    count_field.name, count_field.name,
-                )?;
-                writeln!(self.output_file, "        message",)?;
-                writeln!(self.output_file, "    }}")?;
+            if let Some(FieldSize::Variable(Some(count_field))) = &field.size {
+                self.generate_vla_accessors(count_field, field)?;
                 writeln!(self.output_file)?;
             }
+            writeln!(self.output_file, "    #[allow(dead_code)]")?;
+            match count_descr {
+                CountDescriptor::Field { path, r#type } => {
+                    let var_name = path.last().cloned().unwrap_or_default();
+                    writeln!(
+                        self.output_file,
+                        "    pub fn new_message({}: {}) -> ::vpp_plugin::vlibapi::Message<Self> {{",
+                        var_name, r#type
+                    )?;
+                    // Avoid clippy::unnecessary_cast warning by only casting when the count field isn't a u32
+                    let count_expr = if r#type == "u32" {
+                        var_name.clone()
+                    } else {
+                        format!("{} as u32", var_name)
+                    };
+                    writeln!(
+                        self.output_file,
+                        "        let size = ::std::mem::size_of::<Self>() as u32 + {} * ::std::mem::size_of::<{}>() as u32;",
+                        count_expr,
+                        to_rust_type(&field.r#type)?,
+                    )?;
+                    writeln!(
+                        self.output_file,
+                        "        let mut message = unsafe {{ ::std::mem::transmute::<::vpp_plugin::vlibapi::Message<u8>, ::vpp_plugin::vlibapi::Message<Self>>(::vpp_plugin::vlibapi::Message::new_bytes(size)) }};",
+                    )?;
+                    writeln!(
+                        self.output_file,
+                        "        message._vl_msg_id = Self::msg_id();",
+                    )?;
+                    writeln!(
+                        self.output_file,
+                        "        message.{} = {};",
+                        path.join("."),
+                        var_name,
+                    )?;
+                }
+                CountDescriptor::String(path) => {
+                    writeln!(
+                        self.output_file,
+                        "    pub fn new_message(length: u32) -> ::vpp_plugin::vlibapi::Message<Self> {{",
+                    )?;
+                    writeln!(
+                        self.output_file,
+                        "        let size = ::std::mem::size_of::<Self>() as u32 + length;",
+                    )?;
+                    writeln!(
+                        self.output_file,
+                        "        let mut message = unsafe {{ ::std::mem::transmute::<::vpp_plugin::vlibapi::Message<u8>, ::vpp_plugin::vlibapi::Message<Self>>(::vpp_plugin::vlibapi::Message::new_bytes(size)) }};",
+                    )?;
+                    writeln!(
+                        self.output_file,
+                        "        message._vl_msg_id = Self::msg_id();",
+                    )?;
+                    writeln!(
+                        self.output_file,
+                        "        unsafe {{ message.{}.set_len(length); }}",
+                        path.join("."),
+                    )?;
+                }
+            }
+            writeln!(self.output_file, "        message",)?;
+            writeln!(self.output_file, "    }}")?;
+            writeln!(self.output_file)?;
         }
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
@@ -485,16 +526,6 @@ impl ApiGenContext<'_> {
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
         if let Some((field, count_descr)) = message.vla(self.parser) {
-            let CountDescriptor::Field {
-                path: count_path,
-                r#type: count_type,
-            } = count_descr
-            else {
-                return Err(Error::Unimplemented(format!(
-                    "string type VLA in message {} not supported",
-                    message.name()
-                )));
-            };
             write!(self.output_file, "pub ",)?;
             writeln!(
                 self.output_file,
@@ -502,32 +533,47 @@ impl ApiGenContext<'_> {
                 message.name(),
                 upper_camel_name
             )?;
-            match count_type.as_str() {
-                "u8" => {
+            write!(
+                self.output_file,
+                "    ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
+                upper_camel_name,
+            )?;
+            match count_descr {
+                CountDescriptor::Field {
+                    path: count_path,
+                    r#type: count_type,
+                } => match count_type.as_str() {
+                    "u8" => {
+                        writeln!(
+                            self.output_file,
+                            " + (*a).{} as ::vpp_plugin::bindings::uword * ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
+                            count_path.join("."),
+                            to_rust_type(&field.r#type)?,
+                        )?;
+                    }
+                    "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => {
+                        writeln!(
+                            self.output_file,
+                            " + {}::from_be((*a).{}) as ::vpp_plugin::bindings::uword * ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
+                            to_rust_type(&count_type)?,
+                            count_path.join("."),
+                            to_rust_type(&field.r#type)?,
+                        )?;
+                    }
+                    _ => {
+                        return Err(Error::Unimplemented(format!(
+                            "Unexpected type of variable-length array count field {} in message {}",
+                            count_path.join("."),
+                            message.name()
+                        )));
+                    }
+                },
+                CountDescriptor::String(string_path) => {
                     writeln!(
                         self.output_file,
-                        "    ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword + (*a).{} as ::vpp_plugin::bindings::uword * ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
-                        upper_camel_name,
-                        count_path.join("."),
-                        to_rust_type(&field.r#type)?,
+                        " + u32::from_be((*a).{}.len()) as ::vpp_plugin::bindings::uword",
+                        string_path.join("."),
                     )?;
-                }
-                "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => {
-                    writeln!(
-                        self.output_file,
-                        "    ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword + {}::from_be((*a).{}) as ::vpp_plugin::bindings::uword * ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
-                        upper_camel_name,
-                        to_rust_type(&count_type)?,
-                        count_path.join("."),
-                        to_rust_type(&field.r#type)?,
-                    )?;
-                }
-                _ => {
-                    return Err(Error::Unimplemented(format!(
-                        "Unexpected type of variable-length array count field {} in message {}",
-                        count_path.join("."),
-                        message.name()
-                    )));
                 }
             }
         } else {
@@ -784,11 +830,18 @@ impl ApiGenContext<'_> {
             };
 
             match field.r#type.as_str() {
-                "u8" | "string" | "bool" => {
+                "u8" | "bool" => {
                     writeln!(
                         self.output_file,
                         "        // self.{} = self.{} (no-op)",
                         field_name, field_name
+                    )?;
+                }
+                "string" => {
+                    writeln!(
+                        self.output_file,
+                        "        ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut self.{}, to_net);",
+                        field_name,
                     )?;
                 }
                 "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => match &field.size {

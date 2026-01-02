@@ -177,6 +177,20 @@ autoendian autoreply define test_variable_array_in_type {
     vl_api_test_variable_array_typedef_t field;
 };
 
+autoendian define test_string {
+    u32 client_index;
+    u32 context;
+    string fixed[64];
+    string variable[];
+};
+
+autoendian define test_string_reply {
+    u32 context;
+    i32 retval;
+    string fixed[64];
+    string variable[];
+};
+
 service {
   rpc test_stream_get returns test_stream_get_reply
     stream test_stream_details;

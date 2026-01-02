@@ -872,6 +872,37 @@ impl test_api::Handlers for ApiHandler {
             Ok(Default::default())
         }
     }
+
+    unsafe fn test_string(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestString,
+    ) -> Result<vlibapi::Message<test_api::TestStringReply>, i32> {
+        println!("test_string({:?})", mp);
+        if mp.fixed.to_string_lossy() != format!("{:<63}", "Hello World!") {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        if mp.variable.to_string_lossy() != "Hello World!" {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        // Test some other ApiString methods
+        if mp
+            .variable
+            .to_str()
+            .map_err(|_| VNET_ERR_INVALID_ARGUMENT)?
+            != "Hello World!"
+        {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        if mp.variable.is_empty() {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+
+        let reply_str = "Goodbye World!";
+        let mut reply = test_api::TestStringReply::new_message(reply_str.len() as u32);
+        reply.fixed.copy_from_str(&format!("{:<64}", reply_str));
+        reply.variable.copy_from_str(reply_str);
+        Ok(reply)
+    }
 }
 
 #[vlib_init_function]

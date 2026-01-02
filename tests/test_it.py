@@ -495,5 +495,17 @@ class IntegrationTestCase(VppTestCase):
             },
         )
 
+    def test_api_string(self):
+        """API using strings"""
+        reply = self.vapi.api(
+            self.vapi.papi.test_string,
+            {
+                'fixed': 'Hello World!'.ljust(63),
+                'variable': 'Hello World!',
+            },
+        )
+        self.assertEqual(reply.fixed, "Goodbye World!".ljust(64))
+        self.assertEqual(reply.variable, "Goodbye World!")
+
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

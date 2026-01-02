@@ -192,7 +192,7 @@ pub enum CountDescriptor {
         /// The type of the count field
         r#type: String,
     },
-    String,
+    String(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -213,7 +213,7 @@ impl Field {
     /// Returns optional description of the count
     fn vla(&self, parser: &ApiParser, other_fields: &[Field]) -> Option<CountDescriptor> {
         if matches!(&self.size, Some(FieldSize::Variable(None))) && self.r#type == "string" {
-            return Some(CountDescriptor::String);
+            return Some(CountDescriptor::String(vec![self.name.clone()]));
         }
         if let Some(FieldSize::Variable(Some(count_field))) = &self.size
             && let Some(count_field) = other_fields.iter().find(|field| &field.name == count_field)
@@ -237,7 +237,11 @@ impl Field {
                         r#type,
                     });
                 }
-                CountDescriptor::String => return Some(CountDescriptor::String),
+                CountDescriptor::String(path) => {
+                    let mut new_path = vec![self.name.clone()];
+                    new_path.extend(path);
+                    return Some(CountDescriptor::String(new_path));
+                }
             }
         }
         None
@@ -572,7 +576,7 @@ impl TypeDetails {
             Self::TypedefBlock { fields } => fields,
             Self::Typedef { r#type, size } => {
                 if matches!(size, Some(FieldSize::Variable(None))) && r#type == "string" {
-                    return Some(CountDescriptor::String);
+                    return Some(CountDescriptor::String(vec![]));
                 } else {
                     return None;
                 }

@@ -45,8 +45,14 @@ jobs:
         run: cargo doc --no-deps
 
   tests:
-    name: Run tests
-    runs-on: ubuntu-latest
+    name: Run tests (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # It's useful to know all of the failures up front in case they are different between the
+      # variants
+      fail-fast: false
+      matrix:
+        runner: ['ubuntu-24.04', 'ubuntu-24.04-arm']
     steps:
       - uses: actions/checkout@v5
       - name: Install Rust ${{ env.rust_stable }}
@@ -57,7 +63,7 @@ jobs:
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: vpp-${{ env.vpp }}
+          key: vpp-${{ env.vpp }}-${{ matrix.runner }}
       - name: Install vpp ${{ env.vpp }}
         run: |
           export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"

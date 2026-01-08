@@ -492,10 +492,19 @@ pub fn derive_error_counters(input: TokenStream) -> TokenStream {
 }
 
 const CPU_MARCH_TO_CPU_AND_TARGET_FEATURE: &[(&str, Option<&str>, Option<&str>)] = &[
-    ("scalar", None, None),
+    ("scalar", Some("x86_64"), None),
     ("hsw", Some("x86_64"), Some("avx2")),
     ("skx", Some("x86_64"), Some("avx512f")),
     ("icl", Some("x86_64"), Some("avx512bitalg")),
+    // Features equivalent to "v8.2a,sha2,aes", but avoiding use of unstable v8.2a feature
+    ("octeontx2", Some("aarch64"), Some("crc,lse,rdm,pan,lor,vh,ras,dpb,sha2,aes")),
+    // Features equivalent to "v8.1a,sha2,aes", but avoiding use of unstable v8.1a feature
+    ("thunderx2t99", Some("aarch64"), Some("crc,lse,rdm,pan,lor,vh,sha2,aes")),
+    ("cortexa72", Some("aarch64"), Some("crc,sha2,aes")),
+    // Features equivalent to "v8.2a,sha2,aes", but avoiding use of unstable v8.2a feature
+    ("neoversen1", Some("aarch64"), Some("crc,lse,rdm,pan,lor,vh,ras,dpb,sha2,aes")),
+    // Features equivalent to "v9a,sha2,aes", but avoiding use of unstable v9a feature
+    ("neoversen2", Some("aarch64"), Some("crc,lse,rdm,pan,lor,vh,ras,dpb,rcpc,paca,pacg,jsconv,dotprod,dit,flagm,ssbs,sb,dpb2,bti,sve2"))
 ];
 
 #[derive(Default)]

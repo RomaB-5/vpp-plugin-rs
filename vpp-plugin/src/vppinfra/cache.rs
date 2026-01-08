@@ -6,6 +6,9 @@
 // Instead of std::intrinsics::prefetch_read_data which is nightly-only
 #[inline(always)]
 pub fn prefetch_load<T>(p: *const T) {
+    // Suppress unused variable warning on other platforms
+    let _ = p;
+
     #[cfg(target_arch = "x86_64")]
     // SAFETY: it's not clear why this is marked as unsafe, as prefetching a pointer
     // doesn't dereference it or read from it.
@@ -18,6 +21,9 @@ pub fn prefetch_load<T>(p: *const T) {
 // Instead of std::intrinsics::prefetch_write_data which is nightly-only
 #[inline(always)]
 pub fn prefetch_store<T>(p: *const T) {
+    // Suppress unused variable warning on other platforms
+    let _ = p;
+
     #[cfg(target_arch = "x86_64")]
     // SAFETY: it's not clear why this is marked as unsafe, as prefetching a pointer
     // doesn't dereference it or write to it.

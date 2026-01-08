@@ -29,7 +29,7 @@
 use std::{fmt, str::FromStr};
 
 use vpp_plugin::{
-    bindings::ip4_header_t,
+    bindings::ip_dscp_t,
     vlib::{
         self,
         node_generic::{generic_feature_node_x1, FeatureNextNode, GenericFeatureNodeX1},
@@ -48,14 +48,29 @@ mod example_api {
 
 const IP_PROTOCOL_ICMP: u8 = 1;
 
+#[repr(C, packed)]
+#[derive(Copy, Clone, Debug)]
+struct Ip4Header {
+    ip_version_and_header_length: u8,
+    tos: ip_dscp_t,
+    length: u16,
+    fragment_id: u16,
+    flags_and_fragment_offset: u16,
+    ttl: u8,
+    protocol: u8,
+    checksum: u16,
+    src_address: u32,
+    dst_address: u32,
+}
+
 #[derive(Copy, Clone)]
 struct ExampleTrace {
-    header: ip4_header_t,
+    header: Ip4Header,
 }
 
 impl fmt::Display for ExampleTrace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "header: {}", self.header)
+        write!(f, "header: {:?}", self.header)
     }
 }
 
@@ -121,8 +136,8 @@ impl vlib::node::Node for ExampleNode {
                 node: &mut vlib::NodeRuntimeRef<ExampleNode>,
                 b0: &mut vlib::BufferRef<()>,
             ) -> FeatureNextNode<ExampleNextNode> {
-                let ip = b0.current_ptr_mut() as *const ip4_header_t;
-                if (*ip).__bindgen_anon_1.protocol == IP_PROTOCOL_ICMP {
+                let ip = &*(b0.current_ptr_mut() as *const Ip4Header);
+                if ip.protocol == IP_PROTOCOL_ICMP {
                     b0.set_error(node, ExampleErrorCounter::Drop);
                     if unlikely(b0.flags().contains(vlib::BufferFlags::IS_TRACED)) {
                         let t = b0.add_trace(vm, node);

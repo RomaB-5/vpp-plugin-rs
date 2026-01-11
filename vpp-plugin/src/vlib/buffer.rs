@@ -204,7 +204,7 @@ impl<FeatureData> BufferRef<FeatureData> {
     ///
     /// Note that the pointer returned may point to uninitialised data depending on the context.
     /// In addition, depending on the context, the remaining data the amount is expected.
-    /// Finally, remaining data is sufficent and it's initialised it may not have been validated
+    /// Finally, if remaining data is sufficent and it's initialised it may not have been validated
     /// so care must be taken in determining whether or not lengths in the headers can be trusted.
     pub fn current_ptr_mut(&mut self) -> *mut u8 {
         let data = self.data().cast_mut();
@@ -217,14 +217,16 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe { data.offset(current_data as isize) }
     }
 
-    // vlib_buffer_has_space
     /// Check if the buffer has space for `l` more bytes
+    ///
+    /// This corresponds to the VPP C API `vlib_buffer_has_space`.
     pub fn has_space(&self, l: i16) -> bool {
         self.current_length() >= l as u16
     }
 
-    // vlib_buffer_advance
     /// Advance the current data pointer by `l` bytes
+    ///
+    /// This corresponds to the VPP C API `vlib_buffer_advance`.
     ///
     /// # Safety
     ///

@@ -50,8 +50,8 @@ use std::{
 };
 
 use crate::bindings::{
-    _vec_alloc_internal, _vec_resize_internal, vec_attr_t, vec_free_not_inline, vec_header_t,
-    VEC_MIN_ALIGN,
+    _vec_alloc_internal, _vec_resize_internal, VEC_MIN_ALIGN, vec_attr_t, vec_free_not_inline,
+    vec_header_t,
 };
 
 /// Reference to a dynamically resizable array
@@ -76,7 +76,8 @@ impl<T> VecRef<T> {
     /// See also [`Self::from_raw_mut`].
     #[inline(always)]
     pub unsafe fn from_raw<'a>(ptr: *const T) -> &'a Self {
-        &*(ptr as *mut _)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { &*(ptr as *mut _) }
     }
 
     /// Creates a `&mut VecRef<T>` directly from a pointer
@@ -91,7 +92,8 @@ impl<T> VecRef<T> {
     /// See also [`Self::from_raw`].
     #[inline(always)]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut T) -> &'a mut Self {
-        &mut *(ptr as *mut _)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { &mut *(ptr as *mut _) }
     }
 
     /// Creates an `Option<&VecRef<T>>` directly from a pointer
@@ -108,10 +110,13 @@ impl<T> VecRef<T> {
     /// See also [`Self::from_raw_mut`].
     #[inline(always)]
     pub unsafe fn from_raw_opt<'a>(ptr: *const T) -> Option<&'a Self> {
-        if ptr.is_null() {
-            None
-        } else {
-            Some(&*(ptr as *mut _))
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe {
+            if ptr.is_null() {
+                None
+            } else {
+                Some(&*(ptr as *mut _))
+            }
         }
     }
 
@@ -129,10 +134,13 @@ impl<T> VecRef<T> {
     /// See also [`Self::from_raw_mut`].
     #[inline(always)]
     pub unsafe fn from_raw_mut_opt<'a>(ptr: *mut T) -> Option<&'a mut Self> {
-        if ptr.is_null() {
-            None
-        } else {
-            Some(&mut *(ptr as *mut _))
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe {
+            if ptr.is_null() {
+                None
+            } else {
+                Some(&mut *(ptr as *mut _))
+            }
         }
     }
 
@@ -314,11 +322,14 @@ impl<T> VecRef<T> {
     /// - `new_len` must be less than or equal to the capacity of the vector.
     /// - The elements up to `new_len` must be initialized.
     pub unsafe fn set_len(&mut self, new_len: usize) {
-        debug_assert!(new_len <= self.capacity());
-        let hdr = self.as_vec_header_ptr();
-        let new_grow_elts = self.capacity() - new_len;
-        (*hdr).len = new_len as u32;
-        (*hdr).grow_elts = new_grow_elts.try_into().unwrap_or(u8::MAX);
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe {
+            debug_assert!(new_len <= self.capacity());
+            let hdr = self.as_vec_header_ptr();
+            let new_grow_elts = self.capacity() - new_len;
+            (*hdr).len = new_len as u32;
+            (*hdr).grow_elts = new_grow_elts.try_into().unwrap_or(u8::MAX);
+        }
     }
 }
 
@@ -1111,9 +1122,8 @@ macro_rules! vec {
 #[cfg(test)]
 mod tests {
     use crate::vppinfra::{
-        clib_mem_init,
+        VecRef, clib_mem_init,
         vec::{IntoIter, SliceExt, Vec},
-        VecRef,
     };
 
     #[test]

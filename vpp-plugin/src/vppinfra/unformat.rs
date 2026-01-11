@@ -23,15 +23,18 @@ const UNFORMAT_END_OF_INPUT: uword = !0;
 /// - The pointer must stay valid and the contents must not be mutated for the duration of the
 ///   call.
 pub unsafe fn raw_unformat_line_input_to_string(i: *mut unformat_input_t) -> String {
-    let mut line = vec![];
-    loop {
-        let b = vlib_helper_unformat_get_input(i);
-        if b == b'\n'.into() || b == UNFORMAT_END_OF_INPUT {
-            break;
+    // SAFETY: The safety requirements are documented in the function's safety comment.
+    unsafe {
+        let mut line = vec![];
+        loop {
+            let b = vlib_helper_unformat_get_input(i);
+            if b == b'\n'.into() || b == UNFORMAT_END_OF_INPUT {
+                break;
+            }
+            line.push(b as u8);
         }
-        line.push(b as u8);
+        String::from_utf8_lossy(&line).to_string()
     }
-    String::from_utf8_lossy(&line).to_string()
 }
 
 /// Input to an unformat operation

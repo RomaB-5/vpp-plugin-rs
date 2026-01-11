@@ -12,15 +12,14 @@ use bitflags::bitflags;
 
 use crate::{
     bindings::{
-        vlib_add_trace, vlib_buffer_func_main, vlib_buffer_t, vlib_buffer_t__bindgen_ty_1,
-        vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1, CLIB_LOG2_CACHE_LINE_BYTES,
-        VLIB_BUFFER_EXT_HDR_VALID, VLIB_BUFFER_IS_TRACED, VLIB_BUFFER_MIN_CHAIN_SEG_SIZE,
-        VLIB_BUFFER_NEXT_PRESENT, VLIB_BUFFER_PRE_DATA_SIZE, VLIB_BUFFER_TOTAL_LENGTH_VALID,
+        CLIB_LOG2_CACHE_LINE_BYTES, VLIB_BUFFER_EXT_HDR_VALID, VLIB_BUFFER_IS_TRACED,
+        VLIB_BUFFER_MIN_CHAIN_SEG_SIZE, VLIB_BUFFER_NEXT_PRESENT, VLIB_BUFFER_PRE_DATA_SIZE,
+        VLIB_BUFFER_TOTAL_LENGTH_VALID, vlib_add_trace, vlib_buffer_func_main, vlib_buffer_t,
+        vlib_buffer_t__bindgen_ty_1, vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1,
     },
     vlib::{
-        self,
+        self, MainRef,
         node::{ErrorCounters, Node, NodeRuntimeRef, VectorBufferIndex},
-        MainRef,
     },
     vppinfra::{
         cache::{prefetch_load, prefetch_store},
@@ -109,7 +108,8 @@ impl<FeatureData> BufferRef<FeatureData> {
     ///   lifetime of the returned object.
     #[inline(always)]
     pub unsafe fn from_ptr<'a>(ptr: *mut vlib_buffer_t) -> &'a Self {
-        &*(ptr as *mut _)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { &*(ptr as *mut _) }
     }
 
     /// Create a `&mut BufferRef` from a raw pointer
@@ -121,7 +121,8 @@ impl<FeatureData> BufferRef<FeatureData> {
     ///   lifetime of the returned object.
     #[inline(always)]
     pub unsafe fn from_ptr_mut<'a>(ptr: *mut vlib_buffer_t) -> &'a mut Self {
-        &mut *(ptr as *mut _)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { &mut *(ptr as *mut _) }
     }
 
     /// Returns the raw pointer to the underlying `vlib_buffer_t`
@@ -449,16 +450,19 @@ impl u64x8 {
     /// Construct a `u64x8` from a pointer to 8 `u32`s
     #[inline(always)]
     pub(crate) unsafe fn from_u32_ptr(ptr: *const u32) -> Self {
-        Self([
-            *ptr.add(0) as u64,
-            *ptr.add(1) as u64,
-            *ptr.add(2) as u64,
-            *ptr.add(3) as u64,
-            *ptr.add(4) as u64,
-            *ptr.add(5) as u64,
-            *ptr.add(6) as u64,
-            *ptr.add(7) as u64,
-        ])
+        // SAFETY: The caller must ensure the pointer is valid for reading 8 u32 values.
+        unsafe {
+            Self([
+                *ptr.add(0) as u64,
+                *ptr.add(1) as u64,
+                *ptr.add(2) as u64,
+                *ptr.add(3) as u64,
+                *ptr.add(4) as u64,
+                *ptr.add(5) as u64,
+                *ptr.add(6) as u64,
+                *ptr.add(7) as u64,
+            ])
+        }
     }
 
     /// Shift each element to the left by a given constant value, assigning the result to `self`
@@ -487,14 +491,17 @@ impl u64x8 {
     /// Write 8 contiguous elements starting from `ptr`
     #[inline(always)]
     pub(crate) unsafe fn store(&self, ptr: *mut u64) {
-        *ptr.add(0) = self.0[0];
-        *ptr.add(1) = self.0[1];
-        *ptr.add(2) = self.0[2];
-        *ptr.add(3) = self.0[3];
-        *ptr.add(4) = self.0[4];
-        *ptr.add(5) = self.0[5];
-        *ptr.add(6) = self.0[6];
-        *ptr.add(7) = self.0[7];
+        // SAFETY: The caller must ensure the pointer is valid for writing 8 u64 values.
+        unsafe {
+            *ptr.add(0) = self.0[0];
+            *ptr.add(1) = self.0[1];
+            *ptr.add(2) = self.0[2];
+            *ptr.add(3) = self.0[3];
+            *ptr.add(4) = self.0[4];
+            *ptr.add(5) = self.0[5];
+            *ptr.add(6) = self.0[6];
+            *ptr.add(7) = self.0[7];
+        }
     }
 }
 
@@ -531,132 +538,137 @@ impl MainRef {
         from_indices: &'a [u32],
         to: &mut ArrayVec<&'buf mut BufferRef<FeatureData>, N>,
     ) {
-        debug_assert!(from_indices.len() <= N);
-        assert_unchecked(from_indices.len() <= N);
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe {
+            debug_assert!(from_indices.len() <= N);
+            assert_unchecked(from_indices.len() <= N);
 
-        #[cfg(debug_assertions)]
-        for from_index in from_indices {
-            let buffer_mem_size = (*(*self.as_ptr()).buffer_main).buffer_mem_size;
-            debug_assert!(((*from_index << CLIB_LOG2_CACHE_LINE_BYTES) as u64) < buffer_mem_size);
-        }
-
-        let buffer_mem_start = (*(*self.as_ptr()).buffer_main).buffer_mem_start;
-
-        // Check for the ArrayVec capacity being a multiple of 8 and if so the later
-        // implementation can perform a write of 8 elements at a time without worrying about
-        // writing beyond the end of the ArrayVec. If not, then fall back to a generic
-        // implementation. This check will be evaluated at compile time and one implementation
-        // or the other chosen.
-        if !N.is_multiple_of(8) {
-            let base = buffer_mem_start as *const i8;
-            for from_index in from_indices.iter() {
-                let ptr = base.add((*from_index << CLIB_LOG2_CACHE_LINE_BYTES) as usize)
-                    as *mut vlib_buffer_t;
-                to.push_unchecked(BufferRef::from_ptr_mut(ptr));
+            #[cfg(debug_assertions)]
+            for from_index in from_indices {
+                let buffer_mem_size = (*(*self.as_ptr()).buffer_main).buffer_mem_size;
+                debug_assert!(
+                    ((*from_index << CLIB_LOG2_CACHE_LINE_BYTES) as u64) < buffer_mem_size
+                );
             }
-            return;
+
+            let buffer_mem_start = (*(*self.as_ptr()).buffer_main).buffer_mem_start;
+
+            // Check for the ArrayVec capacity being a multiple of 8 and if so the later
+            // implementation can perform a write of 8 elements at a time without worrying about
+            // writing beyond the end of the ArrayVec. If not, then fall back to a generic
+            // implementation. This check will be evaluated at compile time and one implementation
+            // or the other chosen.
+            if !N.is_multiple_of(8) {
+                let base = buffer_mem_start as *const i8;
+                for from_index in from_indices.iter() {
+                    let ptr = base.add((*from_index << CLIB_LOG2_CACHE_LINE_BYTES) as usize)
+                        as *mut vlib_buffer_t;
+                    to.push_unchecked(BufferRef::from_ptr_mut(ptr));
+                }
+                return;
+            }
+
+            let mut len = from_indices.len();
+            len = next_multiple_of_pow2(len, 8);
+
+            let mut from_index = from_indices.as_ptr();
+            let mut to_ptr = to.as_mut_ptr();
+
+            while len >= 64 {
+                let mut from_index_x8_1 = u64x8::from_u32_ptr(from_index);
+                let mut from_index_x8_2 = u64x8::from_u32_ptr(from_index.add(8));
+                let mut from_index_x8_3 = u64x8::from_u32_ptr(from_index.add(2 * 8));
+                let mut from_index_x8_4 = u64x8::from_u32_ptr(from_index.add(3 * 8));
+                let mut from_index_x8_5 = u64x8::from_u32_ptr(from_index.add(4 * 8));
+                let mut from_index_x8_6 = u64x8::from_u32_ptr(from_index.add(5 * 8));
+                let mut from_index_x8_7 = u64x8::from_u32_ptr(from_index.add(6 * 8));
+                let mut from_index_x8_8 = u64x8::from_u32_ptr(from_index.add(7 * 8));
+
+                from_index_x8_1.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                from_index_x8_2.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                from_index_x8_3.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                from_index_x8_4.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                from_index_x8_5.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                from_index_x8_6.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                from_index_x8_7.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                from_index_x8_8.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+
+                let buf_ptr_x8_1 = from_index_x8_1.add_u64(buffer_mem_start);
+                let buf_ptr_x8_2 = from_index_x8_2.add_u64(buffer_mem_start);
+                let buf_ptr_x8_3 = from_index_x8_3.add_u64(buffer_mem_start);
+                let buf_ptr_x8_4 = from_index_x8_4.add_u64(buffer_mem_start);
+                let buf_ptr_x8_5 = from_index_x8_5.add_u64(buffer_mem_start);
+                let buf_ptr_x8_6 = from_index_x8_6.add_u64(buffer_mem_start);
+                let buf_ptr_x8_7 = from_index_x8_7.add_u64(buffer_mem_start);
+                let buf_ptr_x8_8 = from_index_x8_8.add_u64(buffer_mem_start);
+
+                buf_ptr_x8_1.store(to_ptr as *mut u64);
+                buf_ptr_x8_2.store(to_ptr.add(8) as *mut u64);
+                buf_ptr_x8_3.store(to_ptr.add(2 * 8) as *mut u64);
+                buf_ptr_x8_4.store(to_ptr.add(3 * 8) as *mut u64);
+                buf_ptr_x8_5.store(to_ptr.add(4 * 8) as *mut u64);
+                buf_ptr_x8_6.store(to_ptr.add(5 * 8) as *mut u64);
+                buf_ptr_x8_7.store(to_ptr.add(6 * 8) as *mut u64);
+                buf_ptr_x8_8.store(to_ptr.add(7 * 8) as *mut u64);
+
+                to_ptr = to_ptr.add(64);
+                from_index = from_index.add(64);
+                len -= 64;
+            }
+
+            if likely(len >= 32) {
+                let mut from_index_x8_1 = u64x8::from_u32_ptr(from_index);
+                let mut from_index_x8_2 = u64x8::from_u32_ptr(from_index.add(8));
+                let mut from_index_x8_3 = u64x8::from_u32_ptr(from_index.add(2 * 8));
+                let mut from_index_x8_4 = u64x8::from_u32_ptr(from_index.add(3 * 8));
+
+                from_index_x8_1.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                from_index_x8_2.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                from_index_x8_3.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                from_index_x8_4.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+
+                let buf_ptr_x8_1 = from_index_x8_1.add_u64(buffer_mem_start);
+                let buf_ptr_x8_2 = from_index_x8_2.add_u64(buffer_mem_start);
+                let buf_ptr_x8_3 = from_index_x8_3.add_u64(buffer_mem_start);
+                let buf_ptr_x8_4 = from_index_x8_4.add_u64(buffer_mem_start);
+
+                buf_ptr_x8_1.store(to_ptr as *mut u64);
+                buf_ptr_x8_2.store(to_ptr.add(8) as *mut u64);
+                buf_ptr_x8_3.store(to_ptr.add(2 * 8) as *mut u64);
+                buf_ptr_x8_4.store(to_ptr.add(3 * 8) as *mut u64);
+
+                to_ptr = to_ptr.add(32);
+                from_index = from_index.add(32);
+                len -= 32;
+            }
+
+            if likely(len >= 16) {
+                let mut from_index_x8_1 = u64x8::from_u32_ptr(from_index);
+                let mut from_index_x8_2 = u64x8::from_u32_ptr(from_index.add(8));
+
+                from_index_x8_1.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                from_index_x8_2.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+
+                let buf_ptr_x8_1 = from_index_x8_1.add_u64(buffer_mem_start);
+                let buf_ptr_x8_2 = from_index_x8_2.add_u64(buffer_mem_start);
+
+                buf_ptr_x8_1.store(to_ptr as *mut u64);
+                buf_ptr_x8_2.store(to_ptr.add(8) as *mut u64);
+
+                to_ptr = to_ptr.add(16);
+                from_index = from_index.add(16);
+                len -= 16;
+            }
+
+            if likely(len > 0) {
+                let mut from_index_x8 = u64x8::from_u32_ptr(from_index);
+                from_index_x8.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
+                let buf_ptr_x8 = from_index_x8.add_u64(buffer_mem_start);
+                buf_ptr_x8.store(to_ptr as *mut u64);
+            }
+
+            to.set_len(from_indices.len());
         }
-
-        let mut len = from_indices.len();
-        len = next_multiple_of_pow2(len, 8);
-
-        let mut from_index = from_indices.as_ptr();
-        let mut to_ptr = to.as_mut_ptr();
-
-        while len >= 64 {
-            let mut from_index_x8_1 = u64x8::from_u32_ptr(from_index);
-            let mut from_index_x8_2 = u64x8::from_u32_ptr(from_index.add(8));
-            let mut from_index_x8_3 = u64x8::from_u32_ptr(from_index.add(2 * 8));
-            let mut from_index_x8_4 = u64x8::from_u32_ptr(from_index.add(3 * 8));
-            let mut from_index_x8_5 = u64x8::from_u32_ptr(from_index.add(4 * 8));
-            let mut from_index_x8_6 = u64x8::from_u32_ptr(from_index.add(5 * 8));
-            let mut from_index_x8_7 = u64x8::from_u32_ptr(from_index.add(6 * 8));
-            let mut from_index_x8_8 = u64x8::from_u32_ptr(from_index.add(7 * 8));
-
-            from_index_x8_1.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            from_index_x8_2.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            from_index_x8_3.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            from_index_x8_4.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            from_index_x8_5.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            from_index_x8_6.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            from_index_x8_7.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            from_index_x8_8.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-
-            let buf_ptr_x8_1 = from_index_x8_1.add_u64(buffer_mem_start);
-            let buf_ptr_x8_2 = from_index_x8_2.add_u64(buffer_mem_start);
-            let buf_ptr_x8_3 = from_index_x8_3.add_u64(buffer_mem_start);
-            let buf_ptr_x8_4 = from_index_x8_4.add_u64(buffer_mem_start);
-            let buf_ptr_x8_5 = from_index_x8_5.add_u64(buffer_mem_start);
-            let buf_ptr_x8_6 = from_index_x8_6.add_u64(buffer_mem_start);
-            let buf_ptr_x8_7 = from_index_x8_7.add_u64(buffer_mem_start);
-            let buf_ptr_x8_8 = from_index_x8_8.add_u64(buffer_mem_start);
-
-            buf_ptr_x8_1.store(to_ptr as *mut u64);
-            buf_ptr_x8_2.store(to_ptr.add(8) as *mut u64);
-            buf_ptr_x8_3.store(to_ptr.add(2 * 8) as *mut u64);
-            buf_ptr_x8_4.store(to_ptr.add(3 * 8) as *mut u64);
-            buf_ptr_x8_5.store(to_ptr.add(4 * 8) as *mut u64);
-            buf_ptr_x8_6.store(to_ptr.add(5 * 8) as *mut u64);
-            buf_ptr_x8_7.store(to_ptr.add(6 * 8) as *mut u64);
-            buf_ptr_x8_8.store(to_ptr.add(7 * 8) as *mut u64);
-
-            to_ptr = to_ptr.add(64);
-            from_index = from_index.add(64);
-            len -= 64;
-        }
-
-        if likely(len >= 32) {
-            let mut from_index_x8_1 = u64x8::from_u32_ptr(from_index);
-            let mut from_index_x8_2 = u64x8::from_u32_ptr(from_index.add(8));
-            let mut from_index_x8_3 = u64x8::from_u32_ptr(from_index.add(2 * 8));
-            let mut from_index_x8_4 = u64x8::from_u32_ptr(from_index.add(3 * 8));
-
-            from_index_x8_1.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            from_index_x8_2.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            from_index_x8_3.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            from_index_x8_4.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-
-            let buf_ptr_x8_1 = from_index_x8_1.add_u64(buffer_mem_start);
-            let buf_ptr_x8_2 = from_index_x8_2.add_u64(buffer_mem_start);
-            let buf_ptr_x8_3 = from_index_x8_3.add_u64(buffer_mem_start);
-            let buf_ptr_x8_4 = from_index_x8_4.add_u64(buffer_mem_start);
-
-            buf_ptr_x8_1.store(to_ptr as *mut u64);
-            buf_ptr_x8_2.store(to_ptr.add(8) as *mut u64);
-            buf_ptr_x8_3.store(to_ptr.add(2 * 8) as *mut u64);
-            buf_ptr_x8_4.store(to_ptr.add(3 * 8) as *mut u64);
-
-            to_ptr = to_ptr.add(32);
-            from_index = from_index.add(32);
-            len -= 32;
-        }
-
-        if likely(len >= 16) {
-            let mut from_index_x8_1 = u64x8::from_u32_ptr(from_index);
-            let mut from_index_x8_2 = u64x8::from_u32_ptr(from_index.add(8));
-
-            from_index_x8_1.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            from_index_x8_2.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-
-            let buf_ptr_x8_1 = from_index_x8_1.add_u64(buffer_mem_start);
-            let buf_ptr_x8_2 = from_index_x8_2.add_u64(buffer_mem_start);
-
-            buf_ptr_x8_1.store(to_ptr as *mut u64);
-            buf_ptr_x8_2.store(to_ptr.add(8) as *mut u64);
-
-            to_ptr = to_ptr.add(16);
-            from_index = from_index.add(16);
-            len -= 16;
-        }
-
-        if likely(len > 0) {
-            let mut from_index_x8 = u64x8::from_u32_ptr(from_index);
-            from_index_x8.shift_elements_left::<CLIB_LOG2_CACHE_LINE_BYTES>();
-            let buf_ptr_x8 = from_index_x8.add_u64(buffer_mem_start);
-            buf_ptr_x8.store(to_ptr as *mut u64);
-        }
-
-        to.set_len(from_indices.len());
     }
 
     /// Enqueues a slice of buffer indices to a next node
@@ -723,8 +735,8 @@ mod tests {
     use arrayvec::ArrayVec;
 
     use crate::{
-        bindings::{vlib_buffer_main_t, vlib_buffer_t, vlib_main_t, CLIB_LOG2_CACHE_LINE_BYTES},
-        vlib::{node::FRAME_SIZE, MainRef},
+        bindings::{CLIB_LOG2_CACHE_LINE_BYTES, vlib_buffer_main_t, vlib_buffer_t, vlib_main_t},
+        vlib::{MainRef, node::FRAME_SIZE},
     };
 
     #[test]

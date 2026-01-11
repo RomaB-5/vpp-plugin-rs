@@ -5,16 +5,16 @@
 use bitflags::bitflags;
 
 use crate::bindings::{
-    feature_main, vnet_buffer_opaque_t, vnet_config_main_t, VNET_BUFFER_F_AVAIL1,
-    VNET_BUFFER_F_AVAIL2, VNET_BUFFER_F_AVAIL3, VNET_BUFFER_F_AVAIL4, VNET_BUFFER_F_AVAIL5,
-    VNET_BUFFER_F_AVAIL6, VNET_BUFFER_F_AVAIL7, VNET_BUFFER_F_AVAIL8, VNET_BUFFER_F_AVAIL9,
-    VNET_BUFFER_F_FLOW_REPORT, VNET_BUFFER_F_GSO, VNET_BUFFER_F_IS_DVR, VNET_BUFFER_F_IS_IP4,
-    VNET_BUFFER_F_IS_IP6, VNET_BUFFER_F_IS_NATED, VNET_BUFFER_F_L2_HDR_OFFSET_VALID,
-    VNET_BUFFER_F_L3_HDR_OFFSET_VALID, VNET_BUFFER_F_L4_CHECKSUM_COMPUTED,
-    VNET_BUFFER_F_L4_CHECKSUM_CORRECT, VNET_BUFFER_F_L4_HDR_OFFSET_VALID,
-    VNET_BUFFER_F_LOCALLY_ORIGINATED, VNET_BUFFER_F_LOOP_COUNTER_VALID, VNET_BUFFER_F_OFFLOAD,
-    VNET_BUFFER_F_QOS_DATA_VALID, VNET_BUFFER_F_SPAN_CLONE, VNET_BUFFER_F_VLAN_1_DEEP,
-    VNET_BUFFER_F_VLAN_2_DEEP,
+    VNET_BUFFER_F_AVAIL1, VNET_BUFFER_F_AVAIL2, VNET_BUFFER_F_AVAIL3, VNET_BUFFER_F_AVAIL4,
+    VNET_BUFFER_F_AVAIL5, VNET_BUFFER_F_AVAIL6, VNET_BUFFER_F_AVAIL7, VNET_BUFFER_F_AVAIL8,
+    VNET_BUFFER_F_AVAIL9, VNET_BUFFER_F_FLOW_REPORT, VNET_BUFFER_F_GSO, VNET_BUFFER_F_IS_DVR,
+    VNET_BUFFER_F_IS_IP4, VNET_BUFFER_F_IS_IP6, VNET_BUFFER_F_IS_NATED,
+    VNET_BUFFER_F_L2_HDR_OFFSET_VALID, VNET_BUFFER_F_L3_HDR_OFFSET_VALID,
+    VNET_BUFFER_F_L4_CHECKSUM_COMPUTED, VNET_BUFFER_F_L4_CHECKSUM_CORRECT,
+    VNET_BUFFER_F_L4_HDR_OFFSET_VALID, VNET_BUFFER_F_LOCALLY_ORIGINATED,
+    VNET_BUFFER_F_LOOP_COUNTER_VALID, VNET_BUFFER_F_OFFLOAD, VNET_BUFFER_F_QOS_DATA_VALID,
+    VNET_BUFFER_F_SPAN_CLONE, VNET_BUFFER_F_VLAN_1_DEEP, VNET_BUFFER_F_VLAN_2_DEEP, feature_main,
+    vnet_buffer_opaque_t, vnet_config_main_t,
 };
 
 bitflags! {
@@ -77,7 +77,8 @@ impl BufferRef {
     ///   lifetime of the returned object.
     #[inline(always)]
     pub unsafe fn from_ptr<'a>(ptr: *const vnet_buffer_opaque_t) -> &'a BufferRef {
-        &*(ptr as *mut _)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { &*(ptr as *mut _) }
     }
 
     /// Create a `&mut BufferRef` from a raw pointer
@@ -89,7 +90,8 @@ impl BufferRef {
     ///   lifetime of the returned object.
     #[inline(always)]
     pub unsafe fn from_ptr_mut<'a>(ptr: *mut vnet_buffer_opaque_t) -> &'a mut BufferRef {
-        &mut *(ptr as *mut _)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { &mut *(ptr as *mut _) }
     }
 
     /// Returns the raw pointer to the underlying `vnet_buffer_opaque_t`

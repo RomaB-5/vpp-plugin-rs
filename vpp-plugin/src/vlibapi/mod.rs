@@ -140,9 +140,12 @@ impl<T> Message<MaybeUninit<T>> {
     /// memory is not properly initialised, using the resulting `Message<T>` is undefined
     /// behaviour.
     pub unsafe fn assume_init(self) -> Message<T> {
-        let pointer = Message::into_raw(self);
-        Message {
-            pointer: NonNull::new_unchecked(pointer as *mut T),
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe {
+            let pointer = Message::into_raw(self);
+            Message {
+                pointer: NonNull::new_unchecked(pointer as *mut T),
+            }
         }
     }
 
@@ -283,7 +286,8 @@ impl Registration {
     /// - The pointer must remain valid for the returned lifetime and must not be freed or
     ///   invalidated while the borrow is active.
     pub unsafe fn from_ptr_mut<'a>(ptr: *mut vl_api_registration_t) -> &'a mut Self {
-        &mut *(ptr as *mut _)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { &mut *(ptr as *mut _) }
     }
 
     /// Return the raw `vl_api_registration_t` pointer for this `Registration`.
@@ -385,8 +389,11 @@ impl<'scope, T: EndianSwap> Stream<'scope, T> {
     /// indexed from 0 up to the contents of the length field are initialised and contained within
     /// the memory allocated for the object.
     pub unsafe fn send_message(&mut self, mut message: Message<T>) {
-        message.endian_swap(true);
-        self.send_message_ne(message);
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe {
+            message.endian_swap(true);
+            self.send_message_ne(message);
+        }
     }
 }
 

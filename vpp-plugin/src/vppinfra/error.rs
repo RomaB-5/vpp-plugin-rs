@@ -12,7 +12,7 @@ use std::{
 };
 
 use super::{Vec, VecRef};
-use crate::bindings::{_clib_error_return, clib_error_t, uword, CLIB_ERROR_ERRNO_VALID};
+use crate::bindings::{_clib_error_return, CLIB_ERROR_ERRNO_VALID, clib_error_t, uword};
 
 /// A single VPP error
 ///
@@ -54,7 +54,8 @@ impl ErrorStack {
     /// - The pointer must stay valid and the contents must not be mutated for the duration of the
     ///   lifetime of the returned object.
     pub unsafe fn from_raw(ptr: *mut clib_error_t) -> Self {
-        Self(Vec::from_raw(ptr.cast()))
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { Self(Vec::from_raw(ptr.cast())) }
     }
 
     /// Consumes the error stack and returns a raw pointer

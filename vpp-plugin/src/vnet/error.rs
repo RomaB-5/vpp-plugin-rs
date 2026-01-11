@@ -1,7 +1,7 @@
 //! VPP networking errors
 
 use std::{
-    ffi::{c_int, CString},
+    ffi::{CString, c_int},
     fmt::Display,
 };
 

@@ -10,16 +10,16 @@ use bitflags::bitflags;
 
 use crate::{
     bindings::{
-        _vlib_node_registration, vlib_error_desc_t, vlib_frame_t, vlib_helper_get_global_main,
-        vlib_helper_remove_node_from_registrations, vlib_node_fn_registration_t,
-        vlib_node_registration_t, vlib_node_runtime_t, vlib_node_t, VLIB_NODE_FLAG_ADAPTIVE_MODE,
+        _vlib_node_registration, VLIB_NODE_FLAG_ADAPTIVE_MODE,
         VLIB_NODE_FLAG_ALLOW_LAZY_NEXT_NODES, VLIB_NODE_FLAG_FRAME_NO_FREE_AFTER_DISPATCH,
         VLIB_NODE_FLAG_IS_DROP, VLIB_NODE_FLAG_IS_HANDOFF, VLIB_NODE_FLAG_IS_OUTPUT,
         VLIB_NODE_FLAG_IS_PUNT, VLIB_NODE_FLAG_SWITCH_FROM_INTERRUPT_TO_POLLING_MODE,
         VLIB_NODE_FLAG_SWITCH_FROM_POLLING_TO_INTERRUPT_MODE, VLIB_NODE_FLAG_TRACE,
-        VLIB_NODE_FLAG_TRACE_SUPPORTED,
+        VLIB_NODE_FLAG_TRACE_SUPPORTED, vlib_error_desc_t, vlib_frame_t,
+        vlib_helper_get_global_main, vlib_helper_remove_node_from_registrations,
+        vlib_node_fn_registration_t, vlib_node_registration_t, vlib_node_runtime_t, vlib_node_t,
     },
-    vlib::{buffer::BufferRef, MainRef},
+    vlib::{MainRef, buffer::BufferRef},
 };
 
 /// Max number of vector elements to process at once per node
@@ -105,10 +105,13 @@ impl<N: Node, const N_NEXT_NODES: usize> NodeRegistration<N, N_NEXT_NODES> {
     /// - Other pointers in the registration data must be either valid or null as appropriate.
     /// - `vector_size`, `scalar_size`, and `aux_size` must match the sizes of the corresponding types in `N`.
     pub unsafe fn register(&'static self) {
-        let vgm = vlib_helper_get_global_main();
-        let reg = self.registration.get();
-        (*reg).next_registration = (*vgm).node_registrations;
-        (*vgm).node_registrations = reg as *mut vlib_node_registration_t;
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe {
+            let vgm = vlib_helper_get_global_main();
+            let reg = self.registration.get();
+            (*reg).next_registration = (*vgm).node_registrations;
+            (*vgm).node_registrations = reg as *mut vlib_node_registration_t;
+        }
     }
 
     /// Unregisters the node from VPP
@@ -119,11 +122,14 @@ impl<N: Node, const N_NEXT_NODES: usize> NodeRegistration<N, N_NEXT_NODES> {
     /// - Must be called from a destructor function that is invoked after VPP uninitialises.
     /// - The node must have been previously registered with VPP using [`Self::register`].
     pub unsafe fn unregister(&self) {
-        let vgm = vlib_helper_get_global_main();
-        vlib_helper_remove_node_from_registrations(
-            vgm,
-            self.registration.get() as *mut vlib_node_registration_t,
-        );
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe {
+            let vgm = vlib_helper_get_global_main();
+            vlib_helper_remove_node_from_registrations(
+                vgm,
+                self.registration.get() as *mut vlib_node_registration_t,
+            );
+        }
     }
 
     /// Registers a node function with VPP
@@ -133,9 +139,12 @@ impl<N: Node, const N_NEXT_NODES: usize> NodeRegistration<N, N_NEXT_NODES> {
     ///   `vlib_node_fn_registration_t`.
     /// - The `node_fn` must not have been previously registered with VPP.
     pub unsafe fn register_node_fn(&self, node_fn: *mut vlib_node_fn_registration_t) {
-        let reg = self.registration.get();
-        (*node_fn).next_registration = (*reg).node_fn_registrations;
-        (*reg).node_fn_registrations = node_fn;
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe {
+            let reg = self.registration.get();
+            (*node_fn).next_registration = (*reg).node_fn_registrations;
+            (*reg).node_fn_registrations = node_fn;
+        }
     }
 
     /// Creates a `&mut NodeRuntimeRef` directly from a pointer
@@ -151,7 +160,8 @@ impl<N: Node, const N_NEXT_NODES: usize> NodeRegistration<N, N_NEXT_NODES> {
         &self,
         ptr: *mut vlib_node_runtime_t,
     ) -> &'a mut NodeRuntimeRef<N> {
-        NodeRuntimeRef::from_ptr_mut(ptr)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { NodeRuntimeRef::from_ptr_mut(ptr) }
     }
 
     /// Creates a `&mut FrameRef` directly from a pointer
@@ -164,7 +174,8 @@ impl<N: Node, const N_NEXT_NODES: usize> NodeRegistration<N, N_NEXT_NODES> {
     ///
     /// - The same preconditions as [`FrameRef::from_ptr_mut`] apply.
     pub unsafe fn frame_from_ptr<'a>(&self, ptr: *mut vlib_frame_t) -> &'a mut FrameRef<N> {
-        FrameRef::from_ptr_mut(ptr)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { FrameRef::from_ptr_mut(ptr) }
     }
 
     /// Creates a `&mut NodeRef` directly from a pointer
@@ -177,7 +188,8 @@ impl<N: Node, const N_NEXT_NODES: usize> NodeRegistration<N, N_NEXT_NODES> {
     ///
     /// - The same preconditions as [`NodeRef::from_ptr_mut`] apply.
     pub unsafe fn node_from_ptr<'a>(&self, ptr: *mut vlib_node_t) -> &'a mut NodeRef<N> {
-        NodeRef::from_ptr_mut(ptr)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { NodeRef::from_ptr_mut(ptr) }
     }
 
     /// Returns the name of the node as a pointer to a C string
@@ -258,7 +270,8 @@ impl<N: Node> NodeRuntimeRef<N> {
     /// - The `node_index` field must be set correctly to point to a valid node in the VPP node main.
     #[inline(always)]
     pub unsafe fn from_ptr_mut<'a>(ptr: *mut vlib_node_runtime_t) -> &'a mut Self {
-        &mut *(ptr as *mut _)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { &mut *(ptr as *mut _) }
     }
 
     /// Returns the raw pointer to the underlying `vlib_node_runtime_t`
@@ -325,7 +338,8 @@ impl<N: Node + ?Sized> FrameRef<N> {
     ///   the valid, initialised data areas in the frame, and `n_vectors` must be set correctly
     ///   to indicate the number of valid vector and aux elements.
     pub unsafe fn from_ptr_mut<'a>(ptr: *mut vlib_frame_t) -> &'a mut Self {
-        &mut *(ptr as *mut _)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { &mut *(ptr as *mut _) }
     }
 
     /// Returns the raw pointer to the underlying `vlib_frame_t`
@@ -404,9 +418,12 @@ where
         vm: &'vm MainRef,
         to: &mut ArrayVec<&'buf mut BufferRef<N::FeatureData>, ARRAY_N>,
     ) -> &'me [N::Vector] {
-        let from = self.vector();
-        vm.get_buffers(N::Vector::as_u32_slice(from), to);
-        from
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe {
+            let from = self.vector();
+            vm.get_buffers(N::Vector::as_u32_slice(from), to);
+            from
+        }
     }
 }
 
@@ -430,7 +447,8 @@ impl<N: Node> NodeRef<N> {
     /// - The `error_heap_index` field must be set correctly to point to the base index of the
     ///   node's error counters in the VPP error main counters array.
     pub unsafe fn from_ptr_mut<'a>(ptr: *mut vlib_node_t) -> &'a mut Self {
-        &mut *(ptr as *mut _)
+        // SAFETY: The safety requirements are documented in the function's safety comment.
+        unsafe { &mut *(ptr as *mut _) }
     }
 
     /// Returns the raw pointer to the underlying `vlib_node_t`

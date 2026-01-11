@@ -66,10 +66,12 @@ impl BarrierHeldMainRef {
     ///   applies during initialisation before worker threads are started or shutdown after
     ///   worker threads are stopped.
     pub unsafe fn from_ptr_mut<'a>(ptr: *mut vlib_main_t) -> &'a mut Self {
-        // Sanity check: barrier should only ever be held on main thread
-        debug_assert!((*ptr).thread_index == 0);
         // SAFETY: caller must ensure the safety requirements are met
-        unsafe { &mut *(ptr as *mut _) }
+        unsafe {
+            // Sanity check: barrier should only ever be held on main thread
+            debug_assert!((*ptr).thread_index == 0);
+            &mut *(ptr as *mut _)
+        }
     }
 }
 

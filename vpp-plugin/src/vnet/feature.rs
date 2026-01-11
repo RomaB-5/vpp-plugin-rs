@@ -8,8 +8,8 @@ use crate::{
         vnet_feature_registration_t,
     },
     vlib::{
-        node::{Node, NodeRegistration},
         BarrierHeldMainRef,
+        node::{Node, NodeRegistration},
     },
     vnet::{error::VnetError, types::SwIfIndex},
 };
@@ -116,11 +116,7 @@ impl<FeatureConfig> FeatureRegistration<FeatureConfig> {
                 std::mem::size_of::<FeatureConfig>() as u32,
             )
         };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(ret.into())
-        }
+        if ret == 0 { Ok(()) } else { Err(ret.into()) }
     }
 
     /// Disables the feature on the given software interface index
@@ -148,11 +144,7 @@ impl<FeatureConfig> FeatureRegistration<FeatureConfig> {
                 0,
             )
         };
-        if ret == 0 {
-            Ok(())
-        } else {
-            Err(ret.into())
-        }
+        if ret == 0 { Ok(()) } else { Err(ret.into()) }
     }
 }
 

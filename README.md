@@ -29,7 +29,6 @@ Patches are required to be applied to VPP in order to build and use VPP plugins 
 ## Short term goals
 
 - Implement the following features in the API code generator:
-  - enumflags
   - imported types
 - Process nodes using async Rust
 

@@ -903,6 +903,20 @@ impl test_api::Handlers for ApiHandler {
         reply.variable.copy_from_str(reply_str);
         Ok(reply)
     }
+
+    fn test_enumflag(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestEnumflag,
+    ) -> Result<vlibapi::Message<test_api::TestEnumflagReply>, i32> {
+        println!("test_enumflag({:?})", mp);
+        if mp.flags != test_api::TestDir::RX | test_api::TestDir::TX {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        if mp.flags2 != test_api::TestDir2::RX | test_api::TestDir2::TX {
+            return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        Ok(Default::default())
+    }
 }
 
 #[vlib_init_function]

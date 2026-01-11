@@ -734,15 +734,107 @@ impl ApiGenContext<'_> {
         Ok(())
     }
 
+    fn generate_enumflag(&mut self, e: &Enum) -> Result<(), Error> {
+        let upper_camel_name = to_upper_camel_case(&e.name);
+
+        writeln!(
+            self.output_file,
+            "#[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]",
+        )?;
+        writeln!(self.output_file, "#[repr(C, packed)]")?;
+        writeln!(
+            self.output_file,
+            "pub struct {}({});",
+            upper_camel_name, &e.size,
+        )?;
+        writeln!(self.output_file)?;
+        writeln!(self.output_file, "::vpp_plugin::bitflags::bitflags! {{",)?;
+        writeln!(
+            self.output_file,
+            "    impl {}: {} {{",
+            upper_camel_name, &e.size,
+        )?;
+
+        let upper_name = format!("{}_", e.name.to_uppercase());
+        for variant in &e.variants {
+            // For ease of use, strip off the enumflag name being used as part of each defined
+            // flag, since this is redundant as the flags are already namespaced by the enumflag
+            // type
+            let id = variant
+                .id
+                .strip_prefix(&upper_name)
+                .unwrap_or(variant.id.as_str());
+            writeln!(
+                self.output_file,
+                "        const {} = {};",
+                id, variant.value,
+            )?;
+        }
+        writeln!(self.output_file, "    }}")?;
+        writeln!(self.output_file, "}}")?;
+        writeln!(self.output_file)?;
+
+        writeln!(
+            self.output_file,
+            "impl ::std::fmt::Debug for {} {{",
+            upper_camel_name
+        )?;
+        writeln!(
+            self.output_file,
+            "    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {{"
+        )?;
+        writeln!(
+            self.output_file,
+            "        ::vpp_plugin::bitflags::parser::to_writer(self, f)"
+        )?;
+        writeln!(self.output_file, "    }}")?;
+        writeln!(self.output_file, "}}")?;
+        writeln!(self.output_file)?;
+
+        writeln!(
+            self.output_file,
+            "impl ::vpp_plugin::vlibapi::EndianSwap for {} {{",
+            upper_camel_name
+        )?;
+        writeln!(
+            self.output_file,
+            "    unsafe fn endian_swap(&mut self, to_net: bool) {{",
+        )?;
+        // Suppress potential used variable warning
+        writeln!(self.output_file, "        let _ = to_net;",)?;
+        match e.size.as_str() {
+            "u8" => {
+                writeln!(
+                    self.output_file,
+                    "        // *self = Self::from_bits_retain(self.bits()) (no-op)",
+                )?;
+            }
+            "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => {
+                writeln!(
+                    self.output_file,
+                    "        *self = Self::from_bits_retain(self.bits().to_be());",
+                )?;
+            }
+            _ => {
+                return Err(Error::Unimplemented(format!(
+                    "Unexpected size type {} for enum {}",
+                    e.size, e.name
+                )));
+            }
+        }
+        writeln!(self.output_file, "    }}",)?;
+        writeln!(self.output_file, "}}")?;
+        writeln!(self.output_file)?;
+
+        Ok(())
+    }
+
     fn generate_enums(&mut self) -> Result<(), Error> {
         for e in self.parser.enums() {
             self.generate_enum(e)?;
         }
-        if let Some(e) = self.parser.enumflags().first() {
-            return Err(Error::Unimplemented(format!(
-                "Generating code for enumflags is not yet implemented (enumflag type {})",
-                e.name
-            )));
+        for e in self.parser.enumflags() {
+            self.generate_enumflag(e)?;
         }
         Ok(())
     }

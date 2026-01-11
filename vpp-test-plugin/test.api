@@ -191,6 +191,25 @@ autoendian define test_string_reply {
     string variable[];
 };
 
+enumflag test_dir : u8 {
+    TEST_DIR_NONE = 0x0,
+    TEST_DIR_RX = 0x1,
+    TEST_DIR_TX = 0x2,
+};
+
+enumflag test_dir2 : u32 {
+    TEST_DIR2_NONE = 0x0,
+    TEST_DIR2_RX = 0x1,
+    TEST_DIR2_TX = 0x2,
+};
+
+autoendian autoreply define test_enumflag {
+    u32 client_index;
+    u32 context;
+    vl_api_test_dir_t flags;
+    vl_api_test_dir2_t flags2;
+};
+
 service {
   rpc test_stream_get returns test_stream_get_reply
     stream test_stream_details;

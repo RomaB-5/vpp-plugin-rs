@@ -507,5 +507,17 @@ class IntegrationTestCase(VppTestCase):
         self.assertEqual(reply.fixed, "Goodbye World!".ljust(64))
         self.assertEqual(reply.variable, "Goodbye World!")
 
+    def test_api_enumflag(self):
+        """API using enumflag"""
+        test_dir = VppEnum.vl_api_test_dir_t
+        test_dir2 = VppEnum.vl_api_test_dir2_t
+        self.vapi.api(
+            self.vapi.papi.test_enumflag,
+            {
+                'flags': test_dir.TEST_DIR_RX | test_dir.TEST_DIR_TX,
+                'flags2': test_dir2.TEST_DIR2_RX | test_dir2.TEST_DIR2_TX,
+            },
+        )
+
 if __name__ == "__main__":
     unittest.main(testRunner=VppTestRunner)

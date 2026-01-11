@@ -344,11 +344,13 @@ impl ApiGenContext<'_> {
             "    pub unsafe fn {}(&self) -> &[{}] {{",
             field.name, vla_elem_type
         )?;
+        writeln!(self.output_file, "        unsafe {{",)?;
         writeln!(
             self.output_file,
-            "        ::std::slice::from_raw_parts(std::ptr::addr_of!(self.{}).cast(), self.{} as usize)",
+            "            ::std::slice::from_raw_parts(std::ptr::addr_of!(self.{}).cast(), self.{} as usize)",
             field.name, count_field
         )?;
+        writeln!(self.output_file, "        }}",)?;
         writeln!(self.output_file, "    }}")?;
         writeln!(self.output_file)?;
         writeln!(self.output_file, "    #[allow(dead_code)]")?;
@@ -357,11 +359,13 @@ impl ApiGenContext<'_> {
             "    pub unsafe fn {}_mut(&mut self) -> &mut [{}] {{",
             field.name, vla_elem_type
         )?;
+        writeln!(self.output_file, "        unsafe {{",)?;
         writeln!(
             self.output_file,
-            "        std::slice::from_raw_parts_mut(std::ptr::addr_of_mut!(self.{}).cast(), self.{} as usize)",
+            "            std::slice::from_raw_parts_mut(std::ptr::addr_of_mut!(self.{}).cast(), self.{} as usize)",
             field.name, count_field
         )?;
+        writeln!(self.output_file, "        }}",)?;
         writeln!(self.output_file, "    }}")?;
 
         Ok(())
@@ -505,10 +509,12 @@ impl ApiGenContext<'_> {
             message.name(),
             upper_camel_name
         )?;
+        writeln!(self.output_file, "    unsafe {{")?;
         writeln!(
             self.output_file,
-            "    ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut *a, to_net);"
+            "        ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut *a, to_net);"
         )?;
+        writeln!(self.output_file, "    }}")?;
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
 
@@ -517,24 +523,26 @@ impl ApiGenContext<'_> {
             "unsafe extern \"C\" fn {}_format(s: *mut u8, args: *mut ::vpp_plugin::bindings::va_list) -> *mut u8 {{",
             message.name()
         )?;
+        writeln!(self.output_file, "    unsafe {{")?;
         writeln!(
             self.output_file,
-            "    let mut args = ::std::mem::transmute::<*mut ::vpp_plugin::bindings::va_list, ::vpp_plugin::macro_support::va_list::VaList<'_>>(args);"
+            "        let mut args = ::std::mem::transmute::<*mut ::vpp_plugin::bindings::va_list, ::vpp_plugin::macro_support::va_list::VaList<'_>>(args);"
         )?;
         writeln!(
             self.output_file,
-            "    let t = args.get::<*const {}>();",
+            "        let t = args.get::<*const {}>();",
             upper_camel_name
         )?;
         writeln!(
             self.output_file,
-            "    let mut s = ::vpp_plugin::vppinfra::vec::Vec::from_raw(s);"
+            "        let mut s = ::vpp_plugin::vppinfra::vec::Vec::from_raw(s);"
         )?;
         writeln!(
             self.output_file,
-            "    s.extend(format!(\"{{:?}}\", &*t).as_bytes());"
+            "        s.extend(format!(\"{{:?}}\", &*t).as_bytes());"
         )?;
-        writeln!(self.output_file, "    s.into_raw()")?;
+        writeln!(self.output_file, "        s.into_raw()")?;
+        writeln!(self.output_file, "    }}")?;
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
         if let Some((field, count_descr)) = message.vla(self.parser) {
@@ -545,9 +553,10 @@ impl ApiGenContext<'_> {
                 message.name(),
                 upper_camel_name
             )?;
+            writeln!(self.output_file, "    unsafe {{")?;
             write!(
                 self.output_file,
-                "    ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
+                "        ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
                 upper_camel_name,
             )?;
             match count_descr {
@@ -588,6 +597,7 @@ impl ApiGenContext<'_> {
                     )?;
                 }
             }
+            writeln!(self.output_file, "    }}")?;
         } else {
             writeln!(
                 self.output_file,
@@ -895,6 +905,9 @@ impl ApiGenContext<'_> {
         )?;
         // Suppress potential used variable warning
         writeln!(self.output_file, "        let _ = to_net;")?;
+        // To avoid complicating the code generation further
+        writeln!(self.output_file, "        #[allow(unused_unsafe)]")?;
+        writeln!(self.output_file, "        unsafe {{")?;
         let fields = match input {
             EndianSwapInput::Fields(fields) => fields,
             EndianSwapInput::Alias(field) => std::slice::from_ref(field),
@@ -916,18 +929,22 @@ impl ApiGenContext<'_> {
                         ))
                     })?;
                 let vla_elem_type = self.parser.to_rust_vla_elem_type(&field.r#type)?;
-                writeln!(self.output_file, "        let count = if to_net {{",)?;
+                writeln!(self.output_file, "            let count = if to_net {{",)?;
                 writeln!(
                     self.output_file,
-                    "            {}::from_be(self.{})",
+                    "                {}::from_be(self.{})",
                     count_field.r#type, count_field.name,
                 )?;
-                writeln!(self.output_file, "        }} else {{",)?;
-                writeln!(self.output_file, "            self.{}", count_field.name,)?;
-                writeln!(self.output_file, "        }};",)?;
+                writeln!(self.output_file, "            }} else {{",)?;
                 writeln!(
                     self.output_file,
-                    "        let array = ::std::slice::from_raw_parts_mut(std::ptr::addr_of_mut!(self.{}) as *mut {}, count as usize);",
+                    "                self.{}",
+                    count_field.name,
+                )?;
+                writeln!(self.output_file, "            }};",)?;
+                writeln!(
+                    self.output_file,
+                    "            let array = ::std::slice::from_raw_parts_mut(std::ptr::addr_of_mut!(self.{}) as *mut {}, count as usize);",
                     field_name, vla_elem_type,
                 )?;
                 Ok::<_, Error>(())
@@ -937,32 +954,32 @@ impl ApiGenContext<'_> {
                 "u8" | "bool" => {
                     writeln!(
                         self.output_file,
-                        "        // self.{} = self.{} (no-op)",
+                        "            // self.{} = self.{} (no-op)",
                         field_name, field_name
                     )?;
                 }
                 "string" => {
                     writeln!(
                         self.output_file,
-                        "        ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut self.{}, to_net);",
+                        "            ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut self.{}, to_net);",
                         field_name,
                     )?;
                 }
                 "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => match &field.size {
                     Some(FieldSize::Fixed(size)) => {
-                        writeln!(self.output_file, "        for i in 0..{} {{", size)?;
+                        writeln!(self.output_file, "            for i in 0..{} {{", size)?;
                         writeln!(
                             self.output_file,
-                            "            self.{}[i] = self.{}[i].to_be();",
+                            "                self.{}[i] = self.{}[i].to_be();",
                             field_name, field_name
                         )?;
                         writeln!(self.output_file, "        }}",)?;
                     }
                     Some(FieldSize::Variable(Some(count_field))) => {
                         gen_count_variable(count_field)?;
-                        writeln!(self.output_file, "        for elem in array {{")?;
-                        writeln!(self.output_file, "            *elem = elem.to_be();",)?;
-                        writeln!(self.output_file, "        }}")?;
+                        writeln!(self.output_file, "            for elem in array {{")?;
+                        writeln!(self.output_file, "                *elem = elem.to_be();",)?;
+                        writeln!(self.output_file, "            }}")?;
                     }
                     Some(FieldSize::Variable(None)) => {
                         return Err(Error::Unimplemented(format!(
@@ -973,7 +990,7 @@ impl ApiGenContext<'_> {
                     None => {
                         writeln!(
                             self.output_file,
-                            "        self.{} = self.{}.to_be();",
+                            "            self.{} = self.{}.to_be();",
                             field_name, field.name
                         )?;
                     }
@@ -981,28 +998,28 @@ impl ApiGenContext<'_> {
                 "f64" => {
                     writeln!(
                         self.output_file,
-                        "        // self.{} = self.{} (no-op according to VPP API)",
+                        "            // self.{} = self.{} (no-op according to VPP API)",
                         field_name, field_name
                     )?;
                 }
                 _ => match &field.size {
                     Some(FieldSize::Fixed(size)) => {
-                        writeln!(self.output_file, "        for i in 0..{} {{", size)?;
+                        writeln!(self.output_file, "            for i in 0..{} {{", size)?;
                         writeln!(
                             self.output_file,
-                            "            ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut self.{}[i], to_net);",
+                            "                ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut self.{}[i], to_net);",
                             field_name
                         )?;
-                        writeln!(self.output_file, "        }}",)?;
+                        writeln!(self.output_file, "            }}",)?;
                     }
                     Some(FieldSize::Variable(Some(count_field))) => {
                         gen_count_variable(count_field)?;
-                        writeln!(self.output_file, "        for elem in array {{")?;
+                        writeln!(self.output_file, "            for elem in array {{")?;
                         writeln!(
                             self.output_file,
-                            "            ::vpp_plugin::vlibapi::EndianSwap::endian_swap(elem, to_net);",
+                            "                ::vpp_plugin::vlibapi::EndianSwap::endian_swap(elem, to_net);",
                         )?;
-                        writeln!(self.output_file, "        }}",)?;
+                        writeln!(self.output_file, "            }}",)?;
                     }
                     Some(FieldSize::Variable(None)) => {
                         return Err(Error::Unimplemented(format!(
@@ -1015,13 +1032,14 @@ impl ApiGenContext<'_> {
                         // may not be properly aligned
                         writeln!(
                             self.output_file,
-                            "        ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut self.{}, to_net);",
+                            "            ::vpp_plugin::vlibapi::EndianSwap::endian_swap(&mut self.{}, to_net);",
                             field_name,
                         )?;
                     }
                 },
             }
         }
+        writeln!(self.output_file, "        }}",)?;
         writeln!(self.output_file, "    }}",)?;
         writeln!(self.output_file, "}}")?;
         writeln!(self.output_file)?;
@@ -1189,28 +1207,29 @@ impl ApiGenContext<'_> {
                 service.caller(),
                 caller_upper_camel
             )?;
+            writeln!(self.output_file, "    unsafe {{")?;
             writeln!(
                 self.output_file,
-                "    let vm = ::vpp_plugin::vlib::BarrierHeldMainRef::from_ptr_mut("
+                "        let vm = ::vpp_plugin::vlib::BarrierHeldMainRef::from_ptr_mut("
             )?;
             writeln!(
                 self.output_file,
-                "        ::vpp_plugin::bindings::vlib_get_main_not_inline(),"
+                "            ::vpp_plugin::bindings::vlib_get_main_not_inline(),"
             )?;
-            writeln!(self.output_file, "    );")?;
-            writeln!(self.output_file, "    let mp = &*mp;")?;
+            writeln!(self.output_file, "        );")?;
+            writeln!(self.output_file, "        let mp = &*mp;")?;
             if service.reply() == "null" {
-                writeln!(self.output_file, "    H::{}(vm, mp);", service.caller())?;
+                writeln!(self.output_file, "        H::{}(vm, mp);", service.caller())?;
             } else {
                 writeln!(
                     self.output_file,
-                    "    ::vpp_plugin::vlibapi::registration_scope(|s| {{"
+                    "        ::vpp_plugin::vlibapi::registration_scope(|s| {{"
                 )?;
                 // TODO: check for client_index field in caller
                 // TODO: check for context field in caller and reply
                 writeln!(
                     self.output_file,
-                    "        if let Some(reg) = s.from_client_index(vm, mp.client_index) {{"
+                    "            if let Some(reg) = s.from_client_index(vm, mp.client_index) {{"
                 )?;
                 let retval_in_reply_msg = self
                     .parser
@@ -1225,46 +1244,53 @@ impl ApiGenContext<'_> {
                 if service.stream() && service.stream_message().is_none() {
                     writeln!(
                         self.output_file,
-                        "            H::{}(vm, mp, ::vpp_plugin::vlibapi::Stream::new(reg));",
+                        "                H::{}(vm, mp, ::vpp_plugin::vlibapi::Stream::new(reg));",
                         service.caller()
                     )?;
                 } else if retval_in_reply_msg {
                     writeln!(
                         self.output_file,
-                        "            let mut reply = match H::{}(vm, mp{}) {{",
+                        "                let mut reply = match H::{}(vm, mp{}) {{",
                         service.caller(),
                         stream_message_arg,
                     )?;
-                    writeln!(self.output_file, "                Ok(reply) => reply,")?;
+                    writeln!(self.output_file, "                    Ok(reply) => reply,")?;
                     writeln!(
                         self.output_file,
-                        "                Err(retval) => {} {{",
+                        "                    Err(retval) => {} {{",
                         to_upper_camel_case(service.reply())
                     )?;
-                    writeln!(self.output_file, "                    retval,")?;
-                    writeln!(self.output_file, "                    ..Default::default()")?;
-                    writeln!(self.output_file, "                }}")?;
-                    writeln!(self.output_file, "                .into(),")?;
-                    writeln!(self.output_file, "            }};")?;
+                    writeln!(self.output_file, "                        retval,")?;
+                    writeln!(
+                        self.output_file,
+                        "                        ..Default::default()"
+                    )?;
+                    writeln!(self.output_file, "                    }}")?;
+                    writeln!(self.output_file, "                    .into(),")?;
+                    writeln!(self.output_file, "                }};")?;
                 } else {
                     writeln!(
                         self.output_file,
-                        "            let mut reply = H::{}(vm, mp{});",
+                        "                let mut reply = H::{}(vm, mp{});",
                         service.caller(),
                         stream_message_arg,
                     )?;
                 }
                 if !service.stream() || service.stream_message().is_some() {
-                    writeln!(self.output_file, "            reply.context = mp.context;",)?;
                     writeln!(
                         self.output_file,
-                        "            {}_endian(::std::ptr::addr_of_mut!(*reply), true);",
+                        "                reply.context = mp.context;",
+                    )?;
+                    writeln!(
+                        self.output_file,
+                        "                {}_endian(::std::ptr::addr_of_mut!(*reply), true);",
                         service.reply()
                     )?;
-                    writeln!(self.output_file, "            reg.send_message(reply);")?;
+                    writeln!(self.output_file, "                reg.send_message(reply);")?;
                 }
-                writeln!(self.output_file, "        }}")?;
-                writeln!(self.output_file, "    }})")?;
+                writeln!(self.output_file, "            }}")?;
+                writeln!(self.output_file, "        }})")?;
+                writeln!(self.output_file, "    }}")?;
             }
             writeln!(self.output_file, "}}")?;
             writeln!(self.output_file)?;

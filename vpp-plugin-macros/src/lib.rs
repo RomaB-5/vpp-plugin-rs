@@ -50,7 +50,7 @@ impl syn::parse::Parse for PluginRegister {
                     return Err(syn::Error::new(
                         key.span(),
                         format!("Unknown key \"{key}\". Valid keys are: {EXPECTED_KEYS:?}."),
-                    ))
+                    ));
                 }
             }
 
@@ -104,8 +104,8 @@ pub fn vlib_plugin_register(ts: TokenStream) -> TokenStream {
 
     let output = quote!(
         #[doc(hidden)]
-        #[link_section = ".vlib_plugin_registration"]
-        #[no_mangle]
+        #[unsafe(link_section = ".vlib_plugin_registration")]
+        #[unsafe(no_mangle)]
         #[allow(non_upper_case_globals, non_snake_case)]
         #[used]
         pub static mut vlib_plugin_registration: ::vpp_plugin::bindings::vlib_plugin_registration_t = ::vpp_plugin::bindings::vlib_plugin_registration_t {
@@ -497,14 +497,32 @@ const CPU_MARCH_TO_CPU_AND_TARGET_FEATURE: &[(&str, Option<&str>, Option<&str>)]
     ("skx", Some("x86_64"), Some("avx512f")),
     ("icl", Some("x86_64"), Some("avx512bitalg")),
     // Features equivalent to "v8.2a,sha2,aes", but avoiding use of unstable v8.2a feature
-    ("octeontx2", Some("aarch64"), Some("crc,lse,rdm,pan,lor,vh,ras,dpb,sha2,aes")),
+    (
+        "octeontx2",
+        Some("aarch64"),
+        Some("crc,lse,rdm,pan,lor,vh,ras,dpb,sha2,aes"),
+    ),
     // Features equivalent to "v8.1a,sha2,aes", but avoiding use of unstable v8.1a feature
-    ("thunderx2t99", Some("aarch64"), Some("crc,lse,rdm,pan,lor,vh,sha2,aes")),
+    (
+        "thunderx2t99",
+        Some("aarch64"),
+        Some("crc,lse,rdm,pan,lor,vh,sha2,aes"),
+    ),
     ("cortexa72", Some("aarch64"), Some("crc,sha2,aes")),
     // Features equivalent to "v8.2a,sha2,aes", but avoiding use of unstable v8.2a feature
-    ("neoversen1", Some("aarch64"), Some("crc,lse,rdm,pan,lor,vh,ras,dpb,sha2,aes")),
+    (
+        "neoversen1",
+        Some("aarch64"),
+        Some("crc,lse,rdm,pan,lor,vh,ras,dpb,sha2,aes"),
+    ),
     // Features equivalent to "v9a,sha2,aes", but avoiding use of unstable v9a feature
-    ("neoversen2", Some("aarch64"), Some("crc,lse,rdm,pan,lor,vh,ras,dpb,rcpc,paca,pacg,jsconv,dotprod,dit,flagm,ssbs,sb,dpb2,bti,sve2"))
+    (
+        "neoversen2",
+        Some("aarch64"),
+        Some(
+            "crc,lse,rdm,pan,lor,vh,ras,dpb,rcpc,paca,pacg,jsconv,dotprod,dit,flagm,ssbs,sb,dpb2,bti,sve2",
+        ),
+    ),
 ];
 
 #[derive(Default)]
@@ -678,14 +696,16 @@ pub fn vlib_node(attributes: TokenStream, s: TokenStream) -> TokenStream {
                 (
                     quote!(
                         unsafe extern "C" fn #thunk_format_trace(s: *mut u8, args: *mut ::vpp_plugin::bindings::va_list) -> *mut u8 {
-                            let mut args = std::mem::transmute::<_, ::vpp_plugin::macro_support::va_list::VaList<'_>>(args);
-                            let vm = args.get::<*const ::vpp_plugin::bindings::vlib_main_t>().cast_mut();
-                            let node = args.get::<*const ::vpp_plugin::bindings::vlib_node_t>().cast_mut();
-                            let t = args.get::<*const <#ident as ::vpp_plugin::vlib::node::Node>::TraceData>();
-                            let str = #format_trace(&mut ::vpp_plugin::vlib::MainRef::from_ptr_mut(vm), &mut #reg_ident.node_from_ptr(node), &*t);
-                            let mut s = ::vpp_plugin::vppinfra::vec::Vec::from_raw(s);
-                            s.extend(str.as_bytes());
-                            s.into_raw()
+                            unsafe {
+                                let mut args = std::mem::transmute::<_, ::vpp_plugin::macro_support::va_list::VaList<'_>>(args);
+                                let vm = args.get::<*const ::vpp_plugin::bindings::vlib_main_t>().cast_mut();
+                                let node = args.get::<*const ::vpp_plugin::bindings::vlib_node_t>().cast_mut();
+                                let t = args.get::<*const <#ident as ::vpp_plugin::vlib::node::Node>::TraceData>();
+                                let str = #format_trace(&mut ::vpp_plugin::vlib::MainRef::from_ptr_mut(vm), &mut #reg_ident.node_from_ptr(node), &*t);
+                                let mut s = ::vpp_plugin::vppinfra::vec::Vec::from_raw(s);
+                                s.extend(str.as_bytes());
+                                s.into_raw()
+                            }
                         }
                     ),
                     quote!(Some(#thunk_format_trace)),
@@ -907,7 +927,7 @@ impl syn::parse::Parse for FeatureInit {
                     return Err(syn::Error::new(
                         key.span(),
                         format!("Unknown key \"{key}\". Valid keys are: {EXPECTED_KEYS:?}."),
-                    ))
+                    ));
                 }
             }
 

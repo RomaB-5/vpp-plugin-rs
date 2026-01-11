@@ -29,17 +29,16 @@
 use std::{fmt, str::FromStr};
 
 use vpp_plugin::{
+    ErrorCounters, NextNodes,
     bindings::ip_dscp_t,
     vlib::{
-        self,
-        node_generic::{generic_feature_node_x1, FeatureNextNode, GenericFeatureNodeX1},
-        BufferIndex,
+        self, BufferIndex,
+        node_generic::{FeatureNextNode, GenericFeatureNodeX1, generic_feature_node_x1},
     },
     vlib_cli_command, vlib_init_function, vlib_node, vlib_plugin_register, vlibapi,
     vnet::types::SwIfIndex,
     vnet_feature_init,
     vppinfra::{error::ErrorStack, unlikely},
-    ErrorCounters, NextNodes,
 };
 
 mod example_api {
@@ -127,29 +126,33 @@ impl vlib::node::Node for ExampleNode {
         node: &mut vlib::NodeRuntimeRef<Self>,
         frame: &mut vlib::FrameRef<Self>,
     ) -> u16 {
-        struct Impl;
-        impl GenericFeatureNodeX1<ExampleNode> for Impl {
-            #[inline(always)]
-            unsafe fn map_buffer_to_next(
-                &self,
-                vm: &vlib::MainRef,
-                node: &mut vlib::NodeRuntimeRef<ExampleNode>,
-                b0: &mut vlib::BufferRef<()>,
-            ) -> FeatureNextNode<ExampleNextNode> {
-                let ip = &*(b0.current_ptr_mut() as *const Ip4Header);
-                if ip.protocol == IP_PROTOCOL_ICMP {
-                    b0.set_error(node, ExampleErrorCounter::Drop);
-                    if unlikely(b0.flags().contains(vlib::BufferFlags::IS_TRACED)) {
-                        let t = b0.add_trace(vm, node);
-                        t.write(ExampleTrace { header: *ip });
+        unsafe {
+            struct Impl;
+            impl GenericFeatureNodeX1<ExampleNode> for Impl {
+                #[inline(always)]
+                unsafe fn map_buffer_to_next(
+                    &self,
+                    vm: &vlib::MainRef,
+                    node: &mut vlib::NodeRuntimeRef<ExampleNode>,
+                    b0: &mut vlib::BufferRef<()>,
+                ) -> FeatureNextNode<ExampleNextNode> {
+                    unsafe {
+                        let ip = &*(b0.current_ptr_mut() as *const Ip4Header);
+                        if ip.protocol == IP_PROTOCOL_ICMP {
+                            b0.set_error(node, ExampleErrorCounter::Drop);
+                            if unlikely(b0.flags().contains(vlib::BufferFlags::IS_TRACED)) {
+                                let t = b0.add_trace(vm, node);
+                                t.write(ExampleTrace { header: *ip });
+                            }
+                            ExampleNextNode::Drop.into()
+                        } else {
+                            FeatureNextNode::NextFeature
+                        }
                     }
-                    ExampleNextNode::Drop.into()
-                } else {
-                    FeatureNextNode::NextFeature
                 }
             }
+            generic_feature_node_x1(vm, node, frame, Impl)
         }
-        generic_feature_node_x1(vm, node, frame, Impl)
     }
 }
 

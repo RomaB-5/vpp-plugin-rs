@@ -12,29 +12,28 @@ use std::{
 };
 
 use vpp_plugin::{
+    ErrorCounters, NextNodes,
     bindings::{ip4_header_t, vnet_api_error_t_VNET_API_ERROR_INVALID_VALUE},
     vlib::{
-        self,
+        self, BufferIndex,
         counter::{CombinedCounter, CombinedCounterIndex, SimpleCounter, SimpleCounterIndex},
         node_generic::{
-            generic_feature_node_x1, generic_feature_node_x4, FeatureNextNode,
-            GenericFeatureNodeX1, GenericFeatureNodeX4,
+            FeatureNextNode, GenericFeatureNodeX1, GenericFeatureNodeX4, generic_feature_node_x1,
+            generic_feature_node_x4,
         },
-        BufferIndex,
     },
     vlib_cli_command, vlib_init_function, vlib_node, vlib_plugin_register, vlibapi,
     vnet::{
-        error::{VnetError, VNET_ERR_INVALID_ARGUMENT},
+        error::{VNET_ERR_INVALID_ARGUMENT, VnetError},
         types::SwIfIndex,
     },
     vnet_feature_init,
     vppinfra::{error::ErrorStack, unlikely},
-    ErrorCounters, NextNodes,
 };
 
 use crate::test_types_api::{
-    TestAddressUnion, TestIp4Address, TEST_ADDRESS_IP4, TEST_ADDRESS_IP6, TEST_NODE_TYPE_X1,
-    TEST_NODE_TYPE_X4,
+    TEST_ADDRESS_IP4, TEST_ADDRESS_IP6, TEST_NODE_TYPE_X1, TEST_NODE_TYPE_X4, TestAddressUnion,
+    TestIp4Address,
 };
 
 mod test_api {
@@ -184,60 +183,63 @@ impl vlib::node::Node for TestNode {
         node: &mut vlib::NodeRuntimeRef<Self>,
         frame: &mut vlib::FrameRef<Self>,
     ) -> u16 {
-        struct Impl;
-        impl GenericFeatureNodeX1<TestNode> for Impl {
-            #[inline(always)]
-            unsafe fn map_buffer_to_next(
-                &self,
-                vm: &vlib::MainRef,
-                node: &mut vlib::NodeRuntimeRef<TestNode>,
-                b0: &mut vlib::BufferRef<()>,
-            ) -> FeatureNextNode<TestNextNode> {
-                if usize::from(b0.current_length()) < std::mem::size_of::<IpUdpHeader>() {
-                    b0.set_error(node, TestErrorCounter::Drop);
-                    return TestNextNode::Drop.into();
+        unsafe {
+            struct Impl;
+            impl GenericFeatureNodeX1<TestNode> for Impl {
+                #[inline(always)]
+                unsafe fn map_buffer_to_next(
+                    &self,
+                    vm: &vlib::MainRef,
+                    node: &mut vlib::NodeRuntimeRef<TestNode>,
+                    b0: &mut vlib::BufferRef<()>,
+                ) -> FeatureNextNode<TestNextNode> {
+                    unsafe {
+                        if usize::from(b0.current_length()) < std::mem::size_of::<IpUdpHeader>() {
+                            b0.set_error(node, TestErrorCounter::Drop);
+                            return TestNextNode::Drop.into();
+                        }
+
+                        let ip_udp: *const IpUdpHeader = b0.current_ptr_mut() as *const IpUdpHeader;
+
+                        let next =
+                            match u16::from_be((*ip_udp).udp.dst_port) {
+                                // 1 falls through into default case to test the simple case
+                                2 => FeatureNextNode::NextFeature,
+                                3 => {
+                                    node.increment_error_counter(vm, TestErrorCounter::Drop, 1);
+                                    TestNextNode::Drop.into()
+                                }
+                                4 => {
+                                    increment_drop_counter_cached(vm, node, 1);
+                                    TestNextNode::Drop.into()
+                                }
+                                5 => {
+                                    SimpleCounterIndex::from_parts(&SIMPLE_COUNTER, 0)
+                                        .increment(vm, 1);
+                                    FeatureNextNode::NextFeature
+                                }
+                                6 => {
+                                    CombinedCounterIndex::from_parts(&COMBINED_COUNTER, 0)
+                                        .increment(vm, 1, b0.length_in_chain(vm));
+                                    FeatureNextNode::NextFeature
+                                }
+                                _ => {
+                                    b0.set_error(node, TestErrorCounter::Drop);
+                                    TestNextNode::Drop.into()
+                                }
+                            };
+
+                        if unlikely(b0.flags().contains(vlib::BufferFlags::IS_TRACED)) {
+                            let t = b0.add_trace(vm, node);
+                            t.write(TestTrace { header: *ip_udp });
+                        }
+
+                        next
+                    }
                 }
-
-                let ip_udp: *const IpUdpHeader = b0.current_ptr_mut() as *const IpUdpHeader;
-
-                let next = match u16::from_be((*ip_udp).udp.dst_port) {
-                    // 1 falls through into default case to test the simple case
-                    2 => FeatureNextNode::NextFeature,
-                    3 => {
-                        node.increment_error_counter(vm, TestErrorCounter::Drop, 1);
-                        TestNextNode::Drop.into()
-                    }
-                    4 => {
-                        increment_drop_counter_cached(vm, node, 1);
-                        TestNextNode::Drop.into()
-                    }
-                    5 => {
-                        SimpleCounterIndex::from_parts(&SIMPLE_COUNTER, 0).increment(vm, 1);
-                        FeatureNextNode::NextFeature
-                    }
-                    6 => {
-                        CombinedCounterIndex::from_parts(&COMBINED_COUNTER, 0).increment(
-                            vm,
-                            1,
-                            b0.length_in_chain(vm),
-                        );
-                        FeatureNextNode::NextFeature
-                    }
-                    _ => {
-                        b0.set_error(node, TestErrorCounter::Drop);
-                        TestNextNode::Drop.into()
-                    }
-                };
-
-                if unlikely(b0.flags().contains(vlib::BufferFlags::IS_TRACED)) {
-                    let t = b0.add_trace(vm, node);
-                    t.write(TestTrace { header: *ip_udp });
-                }
-
-                next
             }
+            generic_feature_node_x1(vm, node, frame, Impl)
         }
-        generic_feature_node_x1(vm, node, frame, Impl)
     }
 }
 
@@ -280,76 +282,85 @@ impl vlib::node::Node for TestX4Node {
         node: &mut vlib::NodeRuntimeRef<Self>,
         frame: &mut vlib::FrameRef<Self>,
     ) -> u16 {
-        struct Impl;
+        unsafe {
+            struct Impl;
 
-        impl GenericFeatureNodeX4<TestX4Node> for Impl {
-            fn prefetch_buffer_x4(
-                &self,
-                _vm: &vlib::MainRef,
-                _node: &mut vlib::NodeRuntimeRef<TestX4Node>,
-                b: &mut [&mut vlib::BufferRef<<TestX4Node as vlib::node::Node>::FeatureData>; 4],
-            ) {
-                b.iter().for_each(|b0| {
-                    b0.prefetch_header_load();
-                    b0.prefetch_data_load();
-                });
-            }
-
-            #[inline(always)]
-            unsafe fn map_buffer_to_next_x4(
-                &self,
-                vm: &vlib::MainRef,
-                node: &mut vlib::NodeRuntimeRef<TestX4Node>,
-                b: &mut [&mut vlib::BufferRef<()>; 4],
-            ) -> [FeatureNextNode<TestNextNode>; 4] {
-                [
-                    self.map_buffer_to_next(vm, node, b[0]),
-                    self.map_buffer_to_next(vm, node, b[1]),
-                    self.map_buffer_to_next(vm, node, b[2]),
-                    self.map_buffer_to_next(vm, node, b[3]),
-                ]
-            }
-
-            unsafe fn trace_buffer(
-                &self,
-                vm: &vlib::MainRef,
-                node: &mut vlib::NodeRuntimeRef<TestX4Node>,
-                b0: &mut vlib::BufferRef<<TestX4Node as vlib::node::Node>::FeatureData>,
-            ) {
-                let ip_udp = b0.current_ptr_mut() as *const IpUdpHeader;
-                if usize::from(b0.current_length()) >= std::mem::size_of::<IpUdpHeader>() {
-                    let t = b0.add_trace(vm, node);
-                    t.write(TestTrace { header: *ip_udp });
-                }
-            }
-        }
-
-        impl GenericFeatureNodeX1<TestX4Node> for Impl {
-            #[inline(always)]
-            unsafe fn map_buffer_to_next(
-                &self,
-                _vm: &vlib::MainRef,
-                node: &mut vlib::NodeRuntimeRef<TestX4Node>,
-                b0: &mut vlib::BufferRef<()>,
-            ) -> FeatureNextNode<TestNextNode> {
-                if usize::from(b0.current_length()) < std::mem::size_of::<IpUdpHeader>() {
-                    b0.set_error(node, TestErrorCounter::Drop);
-                    return TestNextNode::Drop.into();
+            impl GenericFeatureNodeX4<TestX4Node> for Impl {
+                fn prefetch_buffer_x4(
+                    &self,
+                    _vm: &vlib::MainRef,
+                    _node: &mut vlib::NodeRuntimeRef<TestX4Node>,
+                    b: &mut [&mut vlib::BufferRef<<TestX4Node as vlib::node::Node>::FeatureData>;
+                             4],
+                ) {
+                    b.iter().for_each(|b0| {
+                        b0.prefetch_header_load();
+                        b0.prefetch_data_load();
+                    });
                 }
 
-                let ip_udp = b0.current_ptr_mut() as *const IpUdpHeader;
-
-                match u16::from_be((*ip_udp).udp.dst_port) {
-                    1 => {
-                        b0.set_error(node, TestErrorCounter::Drop);
-                        TestNextNode::Drop.into()
+                #[inline(always)]
+                unsafe fn map_buffer_to_next_x4(
+                    &self,
+                    vm: &vlib::MainRef,
+                    node: &mut vlib::NodeRuntimeRef<TestX4Node>,
+                    b: &mut [&mut vlib::BufferRef<()>; 4],
+                ) -> [FeatureNextNode<TestNextNode>; 4] {
+                    unsafe {
+                        [
+                            self.map_buffer_to_next(vm, node, b[0]),
+                            self.map_buffer_to_next(vm, node, b[1]),
+                            self.map_buffer_to_next(vm, node, b[2]),
+                            self.map_buffer_to_next(vm, node, b[3]),
+                        ]
                     }
-                    _ => FeatureNextNode::NextFeature,
+                }
+
+                unsafe fn trace_buffer(
+                    &self,
+                    vm: &vlib::MainRef,
+                    node: &mut vlib::NodeRuntimeRef<TestX4Node>,
+                    b0: &mut vlib::BufferRef<<TestX4Node as vlib::node::Node>::FeatureData>,
+                ) {
+                    unsafe {
+                        let ip_udp = b0.current_ptr_mut() as *const IpUdpHeader;
+                        if usize::from(b0.current_length()) >= std::mem::size_of::<IpUdpHeader>() {
+                            let t = b0.add_trace(vm, node);
+                            t.write(TestTrace { header: *ip_udp });
+                        }
+                    }
                 }
             }
-        }
 
-        generic_feature_node_x4(vm, node, frame, Impl)
+            impl GenericFeatureNodeX1<TestX4Node> for Impl {
+                #[inline(always)]
+                unsafe fn map_buffer_to_next(
+                    &self,
+                    _vm: &vlib::MainRef,
+                    node: &mut vlib::NodeRuntimeRef<TestX4Node>,
+                    b0: &mut vlib::BufferRef<()>,
+                ) -> FeatureNextNode<TestNextNode> {
+                    unsafe {
+                        if usize::from(b0.current_length()) < std::mem::size_of::<IpUdpHeader>() {
+                            b0.set_error(node, TestErrorCounter::Drop);
+                            return TestNextNode::Drop.into();
+                        }
+
+                        let ip_udp = b0.current_ptr_mut() as *const IpUdpHeader;
+
+                        match u16::from_be((*ip_udp).udp.dst_port) {
+                            1 => {
+                                b0.set_error(node, TestErrorCounter::Drop);
+                                TestNextNode::Drop.into()
+                            }
+                            _ => FeatureNextNode::NextFeature,
+                        }
+                    }
+                }
+            }
+
+            generic_feature_node_x4(vm, node, frame, Impl)
+        }
     }
 }
 
@@ -776,7 +787,7 @@ impl test_api::Handlers for ApiHandler {
         _vm: &vlib::BarrierHeldMainRef,
         mp: &test_api::TestTypedef,
     ) -> Result<vlibapi::Message<test_api::TestTypedefReply>, i32> {
-        if mp.addr.0 .0 != [1, 2, 3, 4] {
+        if mp.addr.0.0 != [1, 2, 3, 4] {
             return Err(VNET_ERR_INVALID_ARGUMENT.into());
         }
         Ok(Default::default())

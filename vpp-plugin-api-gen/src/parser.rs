@@ -593,12 +593,25 @@ impl TypeDetails {
 pub struct TypeEntry {
     crc: crc32fast::Hasher,
     pub details: TypeDetails,
+    import_filename: Option<String>,
 }
 
 impl TypeEntry {
     /// Returns optional description of the count
     fn vla(&self, parser: &ApiParser) -> Option<CountDescriptor> {
         self.details.vla(parser)
+    }
+
+    pub fn import_module(&self) -> Option<String> {
+        Some(
+            self.import_filename
+                .as_ref()?
+                .rsplit('/')
+                .next()?
+                .rsplit('.')
+                .next_back()?
+                .to_string(),
+        )
     }
 }
 
@@ -883,7 +896,7 @@ impl ApiParser {
 
         me.do_imports(&statements)?;
         // Side effect: register types
-        let file_crc = me.process_statements(statements, false)?;
+        let file_crc = me.process_statements(statements, None)?;
 
         me.process(file_crc)?;
 
@@ -899,7 +912,7 @@ impl ApiParser {
             let imported_statements = parse_file(import_filename)?;
             self.do_imports(&imported_statements)?;
 
-            self.process_statements(imported_statements, true)?;
+            self.process_statements(imported_statements, Some(import_filename))?;
         }
 
         Ok(())
@@ -965,7 +978,7 @@ impl ApiParser {
     fn process_statements(
         &mut self,
         statements: Vec<Statement>,
-        import: bool,
+        import: Option<&str>,
     ) -> Result<u32, Error> {
         let mut file_crc = crc32fast::Hasher::new();
 
@@ -982,7 +995,7 @@ impl ApiParser {
                     comment,
                 } => {
                     self.validate_vla(&name, &fields, false)?;
-                    if !import {
+                    if import.is_none() {
                         let crc = self.crc_for_fields(&fields, false)?;
                         let define =
                             Message::new(name, options, fields, flags, crc.finalize(), comment);
@@ -1002,7 +1015,7 @@ impl ApiParser {
                 } => {
                     self.validate_vla(&name, &fields, false)?;
                     let crc = self.crc_for_fields(&fields, false)?;
-                    if !import {
+                    if import.is_none() {
                         let un = Type {
                             name: name.clone(),
                             _options: options,
@@ -1016,6 +1029,7 @@ impl ApiParser {
                         TypeEntry {
                             crc,
                             details: TypeDetails::TypedefBlock { fields },
+                            import_filename: import.map(|m| m.to_string()),
                         },
                     )
                 }
@@ -1027,7 +1041,7 @@ impl ApiParser {
                     // As per vppapigen.py
                     crc.update("[]".as_bytes());
 
-                    if !import {
+                    if import.is_none() {
                         let alias = Alias {
                             field: field.clone(),
                             flags,
@@ -1043,6 +1057,7 @@ impl ApiParser {
                                 r#type: field.r#type,
                                 size: field.size,
                             },
+                            import_filename: import.map(|m| m.to_string()),
                         },
                     )
                 }
@@ -1055,7 +1070,7 @@ impl ApiParser {
                     self.validate_vla(&name, &fields, true)?;
                     let crc = self.crc_for_fields(&fields, false)?;
 
-                    if !import {
+                    if import.is_none() {
                         let un = Union {
                             name: name.clone(),
                             _options: options,
@@ -1070,6 +1085,7 @@ impl ApiParser {
                         TypeEntry {
                             crc,
                             details: TypeDetails::Union { fields },
+                            import_filename: import.map(|m| m.to_string()),
                         },
                     )
                 }
@@ -1081,7 +1097,7 @@ impl ApiParser {
                     let mut crc = crc32fast::Hasher::new();
                     crc.update(crc_data_for_enum_block_statements(&block_statements).as_bytes());
                     let variants = enum_variants_from_block_statements(&block_statements);
-                    if !import {
+                    if import.is_none() {
                         self.enums.push(Enum {
                             name: name.clone(),
                             size: size.clone(),
@@ -1089,7 +1105,14 @@ impl ApiParser {
                         });
                     }
                     let details = TypeDetails::Enum { size, variants };
-                    (name, TypeEntry { crc, details })
+                    (
+                        name,
+                        TypeEntry {
+                            crc,
+                            details,
+                            import_filename: import.map(|m| m.to_string()),
+                        },
+                    )
                 }
                 Statement::EnumFlag {
                     name,
@@ -1099,7 +1122,7 @@ impl ApiParser {
                     let mut crc = crc32fast::Hasher::new();
                     crc.update(crc_data_for_enum_block_statements(&block_statements).as_bytes());
                     let variants = enum_variants_from_block_statements(&block_statements);
-                    if !import {
+                    if import.is_none() {
                         self.enumflags.push(Enum {
                             name: name.clone(),
                             size: size.clone(),
@@ -1107,22 +1130,29 @@ impl ApiParser {
                         });
                     }
                     let details = TypeDetails::EnumFlag { size, variants };
-                    (name, TypeEntry { crc, details })
+                    (
+                        name,
+                        TypeEntry {
+                            crc,
+                            details,
+                            import_filename: import.map(|m| m.to_string()),
+                        },
+                    )
                 }
                 Statement::Import(import_file) => {
-                    if !import {
+                    if import.is_none() {
                         self.imports.push(import_file);
                     }
                     continue;
                 }
                 Statement::Option(option) => {
-                    if !import {
+                    if import.is_none() {
                         self.options.push(option);
                     }
                     continue;
                 }
                 Statement::Service(services) => {
-                    if !import {
+                    if import.is_none() {
                         self.services.extend(services);
                     }
                     continue;
@@ -1318,6 +1348,14 @@ impl ApiParser {
 
     pub fn global_types(&self) -> impl Iterator<Item = (&String, &Arc<TypeEntry>)> {
         self.global_types_by_name.iter()
+    }
+
+    pub fn lookup_global_type(&self, r#type: &str) -> Result<&Arc<TypeEntry>, Error> {
+        self.global_types_by_name
+            .get(r#type)
+            .ok_or_else(|| Error::TypeResolution {
+                type_name: r#type.to_string(),
+            })
     }
 }
 

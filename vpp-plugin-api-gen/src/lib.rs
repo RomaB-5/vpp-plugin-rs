@@ -97,29 +97,41 @@ fn to_upper_camel_case(s: &str) -> String {
         .collect()
 }
 
-fn to_rust_type(r#type: &str) -> Result<String, Error> {
-    Ok(if let Some(t) = r#type.strip_prefix(VL_API_PREFIX) {
-        if let Some(t) = t.strip_suffix(VL_API_SUFFIX) {
-            to_upper_camel_case(t)
-        } else {
-            r#type.to_string()
-        }
-    } else {
-        r#type.to_string()
-    })
+trait ApiParserRustExt {
+    fn to_rust_type(&self, r#type: &str) -> Result<String, Error>;
+    fn to_rust_vla_elem_type(&self, r#type: &str) -> Result<String, Error>;
 }
 
-fn to_rust_vla_elem_type(r#type: &str) -> Result<String, Error> {
-    Ok(match r#type {
-        // Note: u8 excluded here as it already has an alignment of 1 byte
-        "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "f64" => {
-            format!(
-                "::vpp_plugin::vlibapi::num_unaligned::Unaligned{}",
-                to_upper_camel_case(r#type)
-            )
-        }
-        _ => to_rust_type(r#type)?,
-    })
+impl ApiParserRustExt for ApiParser {
+    fn to_rust_type(&self, r#type: &str) -> Result<String, Error> {
+        Ok(
+            if let Some(t) = r#type.strip_prefix(VL_API_PREFIX)
+                && let Some(t) = t.strip_suffix(VL_API_SUFFIX)
+            {
+                let global_type = self.lookup_global_type(t)?;
+                if let Some(import_module) = global_type.import_module() {
+                    format!("super::{}_api::{}", import_module, to_upper_camel_case(t))
+                } else {
+                    to_upper_camel_case(t)
+                }
+            } else {
+                r#type.to_string()
+            },
+        )
+    }
+
+    fn to_rust_vla_elem_type(&self, r#type: &str) -> Result<String, Error> {
+        Ok(match r#type {
+            // Note: u8 excluded here as it already has an alignment of 1 byte
+            "u16" | "i16" | "u32" | "i32" | "u64" | "i64" | "f64" => {
+                format!(
+                    "::vpp_plugin::vlibapi::num_unaligned::Unaligned{}",
+                    to_upper_camel_case(r#type)
+                )
+            }
+            _ => self.to_rust_type(r#type)?,
+        })
+    }
 }
 
 /// Generate Rust code for the VPP handling of APIs of from a `.api` file
@@ -255,7 +267,7 @@ impl ApiGenContext<'_> {
                     self.output_file,
                     "    pub {}: [{}; {}],",
                     field.name,
-                    to_rust_type(&field.r#type)?,
+                    self.parser.to_rust_type(&field.r#type)?,
                     size,
                 )?;
             }
@@ -264,7 +276,7 @@ impl ApiGenContext<'_> {
                     self.output_file,
                     "    pub {}: [{}; 0],",
                     field.name,
-                    to_rust_vla_elem_type(&field.r#type)?,
+                    self.parser.to_rust_vla_elem_type(&field.r#type)?,
                 )?;
             }
             None => {
@@ -272,7 +284,7 @@ impl ApiGenContext<'_> {
                     self.output_file,
                     "    pub {}: {},",
                     field.name,
-                    to_rust_type(&field.r#type)?,
+                    self.parser.to_rust_type(&field.r#type)?,
                 )?;
             }
         }
@@ -325,7 +337,7 @@ impl ApiGenContext<'_> {
     }
 
     fn generate_vla_accessors(&mut self, count_field: &str, field: &Field) -> Result<(), Error> {
-        let vla_elem_type = to_rust_vla_elem_type(&field.r#type)?;
+        let vla_elem_type = self.parser.to_rust_vla_elem_type(&field.r#type)?;
         writeln!(self.output_file, "    #[allow(dead_code)]")?;
         writeln!(
             self.output_file,
@@ -412,7 +424,7 @@ impl ApiGenContext<'_> {
                         self.output_file,
                         "        let size = ::std::mem::size_of::<Self>() as u32 + {} * ::std::mem::size_of::<{}>() as u32;",
                         count_expr,
-                        to_rust_type(&field.r#type)?,
+                        self.parser.to_rust_type(&field.r#type)?,
                     )?;
                     writeln!(
                         self.output_file,
@@ -548,16 +560,16 @@ impl ApiGenContext<'_> {
                             self.output_file,
                             " + (*a).{} as ::vpp_plugin::bindings::uword * ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
                             count_path.join("."),
-                            to_rust_type(&field.r#type)?,
+                            self.parser.to_rust_type(&field.r#type)?,
                         )?;
                     }
                     "u16" | "u32" | "u64" | "i16" | "i32" | "i64" => {
                         writeln!(
                             self.output_file,
                             " + {}::from_be((*a).{}) as ::vpp_plugin::bindings::uword * ::std::mem::size_of::<{}>() as ::vpp_plugin::bindings::uword",
-                            to_rust_type(&count_type)?,
+                            self.parser.to_rust_type(&count_type)?,
                             count_path.join("."),
-                            to_rust_type(&field.r#type)?,
+                            self.parser.to_rust_type(&field.r#type)?,
                         )?;
                     }
                     _ => {
@@ -616,7 +628,7 @@ impl ApiGenContext<'_> {
                 self.output_file,
                 "pub struct {}(pub[{}; {}]);",
                 upper_camel_name,
-                to_rust_type(&alias.field().r#type)?,
+                self.parser.to_rust_type(&alias.field().r#type)?,
                 length
             )?;
         } else {
@@ -624,7 +636,7 @@ impl ApiGenContext<'_> {
                 self.output_file,
                 "pub struct {}(pub {});",
                 upper_camel_name,
-                to_rust_type(&alias.field().r#type)?
+                self.parser.to_rust_type(&alias.field().r#type)?
             )?;
         }
         if !alias.manual_endian() {
@@ -903,7 +915,7 @@ impl ApiGenContext<'_> {
                             count_field
                         ))
                     })?;
-                let vla_elem_type = to_rust_vla_elem_type(&field.r#type)?;
+                let vla_elem_type = self.parser.to_rust_vla_elem_type(&field.r#type)?;
                 writeln!(self.output_file, "        let count = if to_net {{",)?;
                 writeln!(
                     self.output_file,
@@ -1065,6 +1077,11 @@ impl ApiGenContext<'_> {
     }
 
     fn generate_register(&mut self) -> Result<(), Error> {
+        // Avoid generating empty, unused traits/functions
+        if self.parser.services().is_empty() {
+            return Ok(());
+        }
+
         writeln!(self.output_file, "pub trait Handlers {{")?;
         for service in self.parser.services() {
             let caller_upper_camel = to_upper_camel_case(service.caller());

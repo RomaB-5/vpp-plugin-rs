@@ -1,0 +1,51 @@
+option version = "1.0.0";
+
+enum test_node_type {
+  TEST_NODE_TYPE_X1,
+  TEST_NODE_TYPE_X4,
+};
+
+typedef test_type {
+  u32 field1;
+};
+
+typedef test_array_type {
+  u16 array[2];
+};
+
+manual_print typedef u8 test_ip4_address[4];
+typedef vl_api_test_ip4_address_t test_ip4_address2;
+manual_print typedef u8 test_ip6_address[16];
+
+enum test_address_family : u8 {
+  TEST_ADDRESS_IP4 = 0,
+  TEST_ADDRESS_IP6,
+};
+
+/* Test union */
+union test_address_union {
+  vl_api_test_ip4_address_t ip4;
+  vl_api_test_ip6_address_t ip6;
+};
+
+manual_print typedef test_address {
+  vl_api_test_address_family_t af;
+  vl_api_test_address_union_t un;
+};
+
+typedef test_variable_array_typedef {
+    i16 nitems;
+    u16 values[nitems];
+};
+
+enumflag test_dir : u8 {
+    TEST_DIR_NONE = 0x0,
+    TEST_DIR_RX = 0x1,
+    TEST_DIR_TX = 0x2,
+};
+
+enumflag test_dir2 : u32 {
+    TEST_DIR2_NONE = 0x0,
+    TEST_DIR2_RX = 0x1,
+    TEST_DIR2_TX = 0x2,
+};

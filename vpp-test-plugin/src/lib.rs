@@ -32,13 +32,17 @@ use vpp_plugin::{
     ErrorCounters, NextNodes,
 };
 
-use crate::test_api::{
+use crate::test_types_api::{
     TestAddressUnion, TestIp4Address, TEST_ADDRESS_IP4, TEST_ADDRESS_IP6, TEST_NODE_TYPE_X1,
     TEST_NODE_TYPE_X4,
 };
 
 mod test_api {
     include!(concat!(env!("OUT_DIR"), "/src/test_api.rs"));
+}
+
+mod test_types_api {
+    include!(concat!(env!("OUT_DIR"), "/src/test_types_api.rs"));
 }
 
 #[repr(C, packed)]
@@ -545,45 +549,45 @@ fn counter_test_command(vm: &mut vlib::BarrierHeldMainRef, input: &str) -> Resul
     Ok(())
 }
 
-impl std::fmt::Debug for test_api::TestIp4Address {
+impl std::fmt::Debug for test_types_api::TestIp4Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Ipv4Addr::from_octets(self.0).fmt(f)
     }
 }
 
 #[allow(clippy::derivable_impls)]
-impl Default for test_api::TestIp4Address {
+impl Default for test_types_api::TestIp4Address {
     fn default() -> Self {
         Self(Default::default())
     }
 }
 
-impl PartialEq for test_api::TestIp4Address {
+impl PartialEq for test_types_api::TestIp4Address {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 
-impl std::fmt::Debug for test_api::TestIp6Address {
+impl std::fmt::Debug for test_types_api::TestIp6Address {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Ipv6Addr::from_octets(self.0).fmt(f)
     }
 }
 
 #[allow(clippy::derivable_impls)]
-impl Default for test_api::TestIp6Address {
+impl Default for test_types_api::TestIp6Address {
     fn default() -> Self {
         Self(Default::default())
     }
 }
 
-impl PartialEq for test_api::TestIp6Address {
+impl PartialEq for test_types_api::TestIp6Address {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 
-impl std::fmt::Debug for test_api::TestAddress {
+impl std::fmt::Debug for test_types_api::TestAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         unsafe {
             if self.af == TEST_ADDRESS_IP4 {
@@ -598,7 +602,7 @@ impl std::fmt::Debug for test_api::TestAddress {
 }
 
 #[allow(clippy::derivable_impls)]
-impl Default for test_api::TestAddress {
+impl Default for test_types_api::TestAddress {
     fn default() -> Self {
         Self {
             af: Default::default(),
@@ -609,7 +613,7 @@ impl Default for test_api::TestAddress {
     }
 }
 
-impl PartialEq for test_api::TestAddress {
+impl PartialEq for test_types_api::TestAddress {
     fn eq(&self, other: &Self) -> bool {
         if self.af != other.af {
             return false;
@@ -626,7 +630,7 @@ impl PartialEq for test_api::TestAddress {
     }
 }
 
-impl ::vpp_plugin::vlibapi::EndianSwap for test_api::TestAddressUnion {
+impl ::vpp_plugin::vlibapi::EndianSwap for test_types_api::TestAddressUnion {
     unsafe fn endian_swap(&mut self, to_net: bool) {
         let _ = to_net;
         // no-op
@@ -909,10 +913,10 @@ impl test_api::Handlers for ApiHandler {
         mp: &test_api::TestEnumflag,
     ) -> Result<vlibapi::Message<test_api::TestEnumflagReply>, i32> {
         println!("test_enumflag({:?})", mp);
-        if mp.flags != test_api::TestDir::RX | test_api::TestDir::TX {
+        if mp.flags != test_types_api::TestDir::RX | test_types_api::TestDir::TX {
             return Err(VNET_ERR_INVALID_ARGUMENT.into());
         }
-        if mp.flags2 != test_api::TestDir2::RX | test_api::TestDir2::TX {
+        if mp.flags2 != test_types_api::TestDir2::RX | test_types_api::TestDir2::TX {
             return Err(VNET_ERR_INVALID_ARGUMENT.into());
         }
         Ok(Default::default())

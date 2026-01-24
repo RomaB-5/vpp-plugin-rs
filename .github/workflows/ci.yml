@@ -5,7 +5,7 @@ on: [push, pull_request]
 env:
   rust_stable: stable
   rust_clippy: '1.92.0'
-  vpp: '25.10'
+  vpp: '26.02'
   CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 jobs:
@@ -72,11 +72,6 @@ jobs:
           cd /tmp/build
           git clone --depth 1 -b v${{ env.vpp }} https://gerrit.fd.io/r/vpp
           cd vpp
-          git checkout -b patched
-          for f in ${srcdir}/patches/vpp-${{ env.vpp }}/*.patch; do
-            echo "Applying $f"
-            patch -p1 < $f
-          done
           make install-dep
           make pkg-deb
           sudo dpkg -i build-root/*.deb

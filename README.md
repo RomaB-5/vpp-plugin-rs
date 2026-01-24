@@ -22,9 +22,7 @@ See vpp-example-plugin for how to build a plugin, including the `Cargo.toml` con
 
 At the moment, interface and crypto engine plugins are not supported, only plugins for nodes.
 
-Only VPP 25.10 is supported. Other versions may work, but small changes may be required.
-
-Patches are required to be applied to VPP in order to build and use VPP plugins built in Rust. See the `patches` directory for details.
+Only VPP 26.02 is currently supported. Later versions may work, but small changes may be required.
 
 ## Short term goals
 

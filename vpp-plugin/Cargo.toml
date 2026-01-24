@@ -1,6 +1,6 @@
 [package]
 name = "vpp-plugin"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = """
 A framework for writing high-performance, reliable VPP plugins in Rust.
@@ -24,7 +24,7 @@ ctor = "0.5.0"
 foreign-types = "0.5"
 # In lieu of https://github.com/rust-lang/rust/issues/44930
 va_list = "0.2.1"
-vpp-plugin-macros = { version = "0.1.0", path = "../vpp-plugin-macros" }
+vpp-plugin-macros = { version = "0.2.0", path = "../vpp-plugin-macros" }
 
 [dev-dependencies]
 paste = "1.0"

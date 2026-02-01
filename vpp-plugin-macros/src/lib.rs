@@ -109,14 +109,9 @@ pub fn vlib_plugin_register(ts: TokenStream) -> TokenStream {
         #[allow(non_upper_case_globals, non_snake_case)]
         #[used]
         pub static mut vlib_plugin_registration: ::vpp_plugin::bindings::vlib_plugin_registration_t = ::vpp_plugin::bindings::vlib_plugin_registration_t {
-            cacheline0: ::vpp_plugin::bindings::__IncompleteArrayField::new(),
-            _bitfield_align_1: [0; 0],
-            _bitfield_1: ::vpp_plugin::bindings::__BindgenBitfieldUnit::new([0; 1]),
             version: [#(#version_elems as ::std::os::raw::c_char),*],
-            version_required: [0; 64],
-            overrides: [0; 256],
-            early_init: ::std::ptr::null_mut(),
             description: #description,
+            ..::vpp_plugin::bindings::vlib_plugin_registration_t::new()
         };
     );
 

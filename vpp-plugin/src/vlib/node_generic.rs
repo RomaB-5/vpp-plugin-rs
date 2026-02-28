@@ -181,7 +181,7 @@ where
         for stride in 0..len / 4 {
             let i = stride * 4;
 
-            if stride * 4 + 4 < len {
+            if i + 8 <= len {
                 let stride_b = b.get_unchecked_mut(i + 4..i + 8);
                 // Convert into array for type safety for trait method
                 let stride_b: &mut [&mut BufferRef<_>; 4] = stride_b.try_into().unwrap_unchecked();

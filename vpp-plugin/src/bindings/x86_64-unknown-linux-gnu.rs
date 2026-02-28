@@ -265,6 +265,10 @@ pub const VLIB_LOG2_MAIN_LOOPS_PER_STATS_UPDATE: u32 = 7;
 pub const VLIB_MAIN_LOOP_EXIT_NONE: u32 = 0;
 pub const VLIB_MAIN_LOOP_EXIT_PANIC: u32 = 1;
 pub const VLIB_MAIN_LOOP_EXIT_CLI: u32 = 2;
+pub const VLIB_LOG2_THREAD_STACK_SIZE: u32 = 21;
+pub const VLIB_THREAD_STACK_SIZE: u32 = 2097152;
+pub const BARRIER_SYNC_DELAY: f64 = 0.03;
+pub const BARRIER_SYNC_TIMEOUT: f64 = 1.0;
 pub const VLIB_BUFFER_MAX_CLONE: u32 = 255;
 pub const VLIB_BUFFER_LINEARIZE_MAX: u32 = 64;
 pub const VNET_REWRITE_TOTAL_BYTES: u32 = 128;
@@ -273,6 +277,7 @@ pub const VL_API_BIG_ENDIAN: u32 = 1;
 pub const VL_SHM_VERSION: u32 = 2;
 pub const VL_API_EPOCH_MASK: u32 = 255;
 pub const VL_API_EPOCH_SHIFT: u32 = 8;
+pub const VL_API_MAX_TIME_IN_HANDLER: f64 = 0.001;
 pub type i8_ = ::std::os::raw::c_schar;
 pub type i16_ = ::std::os::raw::c_short;
 pub type u8_ = ::std::os::raw::c_uchar;
@@ -3763,6 +3768,9 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn vlib_update_elog_main(elog_main: *mut elog_main_t);
 }
+unsafe extern "C" {
+    pub fn vlib_set_thread_name(name: *mut ::std::os::raw::c_char);
+}
 pub type vlib_thread_function_t =
     ::std::option::Option<unsafe extern "C" fn(arg: *mut ::std::os::raw::c_void)>;
 #[repr(C)]
@@ -3902,6 +3910,9 @@ impl Default for vlib_worker_thread_t {
         }
     }
 }
+unsafe extern "C" {
+    pub static mut vlib_worker_threads: *mut vlib_worker_thread_t;
+}
 #[repr(C)]
 #[repr(align(64))]
 #[derive(Debug)]
@@ -3951,6 +3962,65 @@ impl Default for vlib_frame_queue_main_t_ {
 }
 pub type vlib_frame_queue_main_t = vlib_frame_queue_main_t_;
 #[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct vlib_process_signal_event_mt_args_t {
+    pub node_index: uword,
+    pub type_opaque: uword,
+    pub data: uword,
+}
+unsafe extern "C" {
+    pub fn vlib_thread_init(vm: *mut vlib_main_t) -> *mut clib_error_t;
+}
+unsafe extern "C" {
+    pub fn vlib_worker_thread_node_runtime_update();
+}
+unsafe extern "C" {
+    pub fn vlib_create_worker_threads(
+        vm: *mut vlib_main_t,
+        n: ::std::os::raw::c_int,
+        thread_function: ::std::option::Option<
+            unsafe extern "C" fn(arg1: *mut ::std::os::raw::c_void),
+        >,
+    );
+}
+unsafe extern "C" {
+    pub fn vlib_worker_thread_init(w: *mut vlib_worker_thread_t);
+}
+unsafe extern "C" {
+    pub fn vlib_frame_queue_main_init(node_index: u32_, frame_queue_nelts: u32_) -> u32_;
+}
+unsafe extern "C" {
+    pub fn vlib_worker_thread_barrier_sync_int(
+        vm: *mut vlib_main_t,
+        func_name: *const ::std::os::raw::c_char,
+    );
+}
+unsafe extern "C" {
+    pub fn vlib_worker_thread_barrier_release(vm: *mut vlib_main_t);
+}
+unsafe extern "C" {
+    pub fn vlib_worker_thread_barrier_held() -> u8_;
+}
+unsafe extern "C" {
+    pub fn vlib_worker_thread_initial_barrier_sync_and_release(vm: *mut vlib_main_t);
+}
+unsafe extern "C" {
+    pub fn vlib_worker_thread_node_refork();
+}
+unsafe extern "C" {
+    pub fn vlib_worker_wait_one_loop();
+}
+unsafe extern "C" {
+    pub fn vlib_worker_flush_pending_rpc_requests(vm: *mut vlib_main_t);
+}
+pub const sched_policy_t_SCHED_POLICY_OTHER: sched_policy_t = 0;
+pub const sched_policy_t_SCHED_POLICY_FIFO: sched_policy_t = 1;
+pub const sched_policy_t_SCHED_POLICY_RR: sched_policy_t = 2;
+pub const sched_policy_t_SCHED_POLICY_BATCH: sched_policy_t = 3;
+pub const sched_policy_t_SCHED_POLICY_IDLE: sched_policy_t = 5;
+pub const sched_policy_t_SCHED_POLICY_N: sched_policy_t = 6;
+pub type sched_policy_t = ::std::os::raw::c_uint;
+#[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct vlib_thread_main_t {
     pub next: *mut vlib_thread_registration_t,
@@ -3982,6 +4052,37 @@ impl Default for vlib_thread_main_t {
             s.assume_init()
         }
     }
+}
+unsafe extern "C" {
+    pub static mut vlib_thread_main: vlib_thread_main_t;
+}
+unsafe extern "C" {
+    pub fn vlib_thread_stack_init(thread_index: uword) -> *mut u8_;
+}
+unsafe extern "C" {
+    pub static mut rpc_call_main_thread_cb_fn: *mut ::std::os::raw::c_void;
+}
+unsafe extern "C" {
+    pub fn vlib_process_signal_event_mt_helper(args: *mut vlib_process_signal_event_mt_args_t);
+}
+unsafe extern "C" {
+    pub fn vlib_rpc_call_main_thread(
+        function: *mut ::std::os::raw::c_void,
+        args: *mut u8_,
+        size: u32_,
+    );
+}
+unsafe extern "C" {
+    pub fn vlib_get_thread_core_numa(w: *mut vlib_worker_thread_t, cpu_id: ::std::os::raw::c_uint);
+}
+unsafe extern "C" {
+    pub fn vlib_get_thread_main_not_inline() -> *mut vlib_thread_main_t;
+}
+unsafe extern "C" {
+    pub fn vlib_workers_sync();
+}
+unsafe extern "C" {
+    pub fn vlib_workers_continue();
 }
 pub type vlib_buffer_enqueue_to_next_fn_t = ::std::option::Option<
     unsafe extern "C" fn(
@@ -6456,6 +6557,117 @@ unsafe extern "C" {
         sw_if_index: u32_,
     ) -> ::std::os::raw::c_int;
 }
+pub type clib_file_function_t =
+    ::std::option::Option<unsafe extern "C" fn(f: *mut clib_file) -> *mut clib_error_t>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct clib_file {
+    pub file_descriptor: u32_,
+    pub flags: u16_,
+    pub _bitfield_align_1: [u8; 0],
+    pub _bitfield_1: __BindgenBitfieldUnit<[u8; 1usize]>,
+    pub polling_thread_index: u32_,
+    pub index: u32_,
+    pub private_data: u64_,
+    pub read_function: clib_file_function_t,
+    pub write_function: clib_file_function_t,
+    pub error_function: clib_file_function_t,
+    pub description: *mut u8_,
+    pub read_events: u64_,
+    pub write_events: u64_,
+    pub error_events: u64_,
+}
+impl Default for clib_file {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+impl clib_file {
+    #[inline]
+    pub fn active(&self) -> u16_ {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(0usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set_active(&mut self, val: u16_) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(0usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub unsafe fn active_raw(this: *const Self) -> u16_ {
+        unsafe {
+            ::std::mem::transmute(<__BindgenBitfieldUnit<[u8; 1usize]>>::raw_get(
+                ::std::ptr::addr_of!((*this)._bitfield_1),
+                0usize,
+                1u8,
+            ) as u16)
+        }
+    }
+    #[inline]
+    pub unsafe fn set_active_raw(this: *mut Self, val: u16_) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            <__BindgenBitfieldUnit<[u8; 1usize]>>::raw_set(
+                ::std::ptr::addr_of_mut!((*this)._bitfield_1),
+                0usize,
+                1u8,
+                val as u64,
+            )
+        }
+    }
+    #[inline]
+    pub fn dont_close(&self) -> u16_ {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(1usize, 1u8) as u16) }
+    }
+    #[inline]
+    pub fn set_dont_close(&mut self, val: u16_) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            self._bitfield_1.set(1usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub unsafe fn dont_close_raw(this: *const Self) -> u16_ {
+        unsafe {
+            ::std::mem::transmute(<__BindgenBitfieldUnit<[u8; 1usize]>>::raw_get(
+                ::std::ptr::addr_of!((*this)._bitfield_1),
+                1usize,
+                1u8,
+            ) as u16)
+        }
+    }
+    #[inline]
+    pub unsafe fn set_dont_close_raw(this: *mut Self, val: u16_) {
+        unsafe {
+            let val: u16 = ::std::mem::transmute(val);
+            <__BindgenBitfieldUnit<[u8; 1usize]>>::raw_set(
+                ::std::ptr::addr_of_mut!((*this)._bitfield_1),
+                1usize,
+                1u8,
+                val as u64,
+            )
+        }
+    }
+    #[inline]
+    pub fn new_bitfield_1(active: u16_, dont_close: u16_) -> __BindgenBitfieldUnit<[u8; 1usize]> {
+        let mut __bindgen_bitfield_unit: __BindgenBitfieldUnit<[u8; 1usize]> = Default::default();
+        __bindgen_bitfield_unit.set(0usize, 1u8, {
+            let active: u16 = unsafe { ::std::mem::transmute(active) };
+            active as u64
+        });
+        __bindgen_bitfield_unit.set(1usize, 1u8, {
+            let dont_close: u16 = unsafe { ::std::mem::transmute(dont_close) };
+            dont_close as u64
+        });
+        __bindgen_bitfield_unit
+    }
+}
+pub type clib_file_t = clib_file;
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct stat {
@@ -7925,6 +8137,76 @@ unsafe extern "C" {
     );
 }
 unsafe extern "C" {
+    pub fn vl_api_rpc_call_main_thread(
+        fp: *mut ::std::os::raw::c_void,
+        data: *mut u8_,
+        data_length: u32_,
+    );
+}
+unsafe extern "C" {
+    pub fn vl_api_force_rpc_call_main_thread(
+        fp: *mut ::std::os::raw::c_void,
+        data: *mut u8_,
+        data_length: u32_,
+    );
+}
+unsafe extern "C" {
+    pub fn vl_client_get_first_plugin_msg_id(plugin_name: *const ::std::os::raw::c_char) -> u16_;
+}
+unsafe extern "C" {
+    pub fn vl_api_serialize_message_table(am: *mut api_main_t, vector: *mut u8_) -> *mut u8_;
+}
+unsafe extern "C" {
+    pub static mut vl_api_clnt_node: vlib_node_registration_t;
+}
+unsafe extern "C" {
+    pub static mut vl_api_queue_cursizes: *mut *mut ::std::os::raw::c_int;
+}
+pub const vl_api_clnt_process_events_QUEUE_SIGNAL_EVENT: vl_api_clnt_process_events = 1;
+pub const vl_api_clnt_process_events_SOCKET_READ_EVENT: vl_api_clnt_process_events = 2;
+pub type vl_api_clnt_process_events = ::std::os::raw::c_uint;
+pub use self::vl_api_clnt_process_events as vl_api_clnt_process_events_t;
+pub const histogram_index_t_SLEEP_400_US: histogram_index_t = 0;
+pub const histogram_index_t_SLEEP_200_US: histogram_index_t = 1;
+pub const histogram_index_t_SLEEP_100_US: histogram_index_t = 2;
+pub const histogram_index_t_SLEEP_10_US: histogram_index_t = 3;
+pub const histogram_index_t_SLEEP_N_BUCKETS: histogram_index_t = 4;
+pub type histogram_index_t = ::std::os::raw::c_uint;
+unsafe extern "C" {
+    pub static mut vector_rate_histogram: [u64_; 0usize];
+}
+unsafe extern "C" {
+    pub fn sockclnt_get_registration(index: u32_) -> *mut vl_api_registration_t;
+}
+unsafe extern "C" {
+    pub fn socksvr_add_pending_output(
+        uf: *mut clib_file,
+        cf: *mut vl_api_registration_,
+        buffer: *mut u8_,
+        buffer_bytes: uword,
+    );
+}
+unsafe extern "C" {
+    pub fn vl_socket_process_msg(
+        uf: *mut clib_file,
+        rp: *mut vl_api_registration_,
+        input_v: *mut i8_,
+    );
+}
+unsafe extern "C" {
+    pub fn sockclnt_open_index(
+        client_name: *mut ::std::os::raw::c_char,
+        hostname: *mut ::std::os::raw::c_char,
+        port: ::std::os::raw::c_int,
+    ) -> u32_;
+}
+unsafe extern "C" {
+    pub fn sockclnt_close_index(index: u32_);
+}
+unsafe extern "C" {
+    pub fn vl_client_msg_api_send(cm: *mut vl_api_registration_t, elem: *mut u8_);
+}
+unsafe extern "C" {
     pub fn vlib_helper_get_global_main() -> *mut vlib_global_main_t;
 }
 unsafe extern "C" {
@@ -7984,6 +8266,14 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn vlib_helper_zero_combined_counter(cm: *mut vlib_combined_counter_main_t, index: u32_);
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct async_context {
+    _unused: [u8; 0],
+}
+unsafe extern "C" {
+    pub fn vlib_helper_process_node_loop(vm: *mut vlib_main_t, context: *mut async_context) -> !;
 }
 pub type __builtin_va_list = [__va_list_tag; 1usize];
 #[repr(C)]

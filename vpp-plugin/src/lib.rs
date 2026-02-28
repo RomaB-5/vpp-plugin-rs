@@ -3,6 +3,7 @@
     missing_copy_implementations,
     clippy::undocumented_unsafe_blocks
 )]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! # Framework for writing high-performance VPP plugins in Rust
 //!
@@ -17,6 +18,8 @@
 //! # Features
 //!
 //! The following features are available:
+//! - `process-node`: Enables infrastructure for using process nodes (using async/await) in VPP
+//!   plugins.
 //! - `experimental`: Used for functionality and types that aren't tested or are not part of the
 //!   stable API yet as aspects of them might still be under consideration. APIs conditional on
 //!   this feature may be added, changed or removed without the semantic versioning reflecting

@@ -320,6 +320,10 @@ class IntegrationTestCase(VppTestCase):
         # Now send frame of just one packet to validate that corner case
         self.send_and_expect(self.pg0, packet, self.pg1)
 
+        # Send a frame of 7 packets to validate no undefined behaviour for greater than 4, but a
+        # not a multiple of 8
+        self.send_and_expect(self.pg0, 7 * packet, self.pg1)
+
         self.logger.debug(self.vapi.cli("show trace"))
 
         # Clean up

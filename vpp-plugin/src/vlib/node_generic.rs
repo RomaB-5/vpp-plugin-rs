@@ -3,7 +3,6 @@
 //! This module contains generic implementations of VPP nodes following set patterns that can be
 //! reused across different plugins.
 
-use core::slice;
 use std::mem::MaybeUninit;
 
 use arrayvec::ArrayVec;
@@ -88,14 +87,8 @@ where
         // same as from, then every element is initialised. In addition, since we got all of the
         // buffer indices from `frame.get_buffers()` then they must all be valid. All the next nodes
         // expect to receive buffer indices and no other vector, aux or scalar data.
-        vm.buffer_enqueue_to_next(
-            node,
-            from,
-            std::mem::transmute::<&[MaybeUninit<u16>], &[u16]>(slice::from_raw_parts(
-                nexts.as_ptr(),
-                b.len(),
-            )),
-        );
+        let initialized_nexts = nexts.get_unchecked(..b.len()).assume_init_ref();
+        vm.buffer_enqueue_to_next(node, from, initialized_nexts);
 
         frame.vector().len() as u16
     }
@@ -258,14 +251,8 @@ where
         // same as from, then every element is initialised. In addition, since we got all of the
         // buffer indices from `frame.get_buffers()` then they must all be valid. All the next nodes
         // expect to receive buffer indices and no other vector, aux or scalar data.
-        vm.buffer_enqueue_to_next(
-            node,
-            from,
-            std::mem::transmute::<&[MaybeUninit<u16>], &[u16]>(slice::from_raw_parts(
-                nexts.as_ptr(),
-                b.len(),
-            )),
-        );
+        let initialized_nexts = nexts.get_unchecked(..b.len()).assume_init_ref();
+        vm.buffer_enqueue_to_next(node, from, initialized_nexts);
 
         frame.vector().len() as u16
     }

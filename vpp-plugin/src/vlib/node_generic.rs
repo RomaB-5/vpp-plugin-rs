@@ -184,14 +184,16 @@ where
             if i + 8 <= len {
                 let stride_b = b.get_unchecked_mut(i + 4..i + 8);
                 // Convert into array for type safety for trait method
-                let stride_b: &mut [&mut BufferRef<_>; 4] = stride_b.try_into().unwrap_unchecked();
+                let stride_b = stride_b.as_mut_array::<4>().unwrap_unchecked();
 
                 generic_node_impl.prefetch_buffer_x4(vm, node, stride_b);
             }
 
             let stride_b = b.get_unchecked_mut(i..i + 4);
+            let stride_nexts = nexts.get_unchecked_mut(i..i + 4);
             // Convert into array for type safety for trait method
-            let stride_b: &mut [&mut BufferRef<_>; 4] = stride_b.try_into().unwrap_unchecked();
+            let stride_b = stride_b.as_mut_array::<4>().unwrap_unchecked();
+            let stride_nexts = stride_nexts.as_mut_array::<4>().unwrap_unchecked();
 
             // Optimise for common case where feature arc indices are the same for
             // all packets and for the case where the packet won't be dropped. This
@@ -205,23 +207,15 @@ where
                         == stride_b[3].vnet_buffer().feature_arc_index(),
             ) {
                 let feature_next = stride_b[0].vnet_feature_next().0 as u16;
-                nexts.get_unchecked_mut(i).write(feature_next);
-                nexts.get_unchecked_mut(i + 1).write(feature_next);
-                nexts.get_unchecked_mut(i + 2).write(feature_next);
-                nexts.get_unchecked_mut(i + 3).write(feature_next);
+                stride_nexts[0].write(feature_next);
+                stride_nexts[1].write(feature_next);
+                stride_nexts[2].write(feature_next);
+                stride_nexts[3].write(feature_next);
             } else {
-                nexts
-                    .get_unchecked_mut(i)
-                    .write(stride_b[0].vnet_feature_next().0 as u16);
-                nexts
-                    .get_unchecked_mut(i + 1)
-                    .write(stride_b[1].vnet_feature_next().0 as u16);
-                nexts
-                    .get_unchecked_mut(i + 2)
-                    .write(stride_b[2].vnet_feature_next().0 as u16);
-                nexts
-                    .get_unchecked_mut(i + 3)
-                    .write(stride_b[3].vnet_feature_next().0 as u16);
+                stride_nexts[0].write(stride_b[0].vnet_feature_next().0 as u16);
+                stride_nexts[1].write(stride_b[1].vnet_feature_next().0 as u16);
+                stride_nexts[2].write(stride_b[2].vnet_feature_next().0 as u16);
+                stride_nexts[3].write(stride_b[3].vnet_feature_next().0 as u16);
             };
 
             let feat_nexts = generic_node_impl.map_buffer_to_next_x4(vm, node, stride_b);
@@ -230,7 +224,7 @@ where
                 match next {
                     FeatureNextNode::NextFeature => { /* already set */ }
                     FeatureNextNode::DefinedNode(next) => {
-                        nexts.get_unchecked_mut(i + next_i).write(next.into_u16());
+                        stride_nexts[next_i].write(next.into_u16());
                     }
                 };
             }

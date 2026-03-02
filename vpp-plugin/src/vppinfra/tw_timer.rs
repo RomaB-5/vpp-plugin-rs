@@ -23,6 +23,8 @@
 //! - Generic context: The context type `T` is associated with each timer, allowing arbitrary
 //!   application data to be attached without additional allocation.
 
+use std::mem::MaybeUninit;
+
 use super::Vec;
 use slab::Slab;
 
@@ -151,13 +153,35 @@ impl<T, const NUM_LEVELS: usize, const NUM_SLOTS: usize> Default
 impl<T, const NUM_LEVELS: usize, const NUM_SLOTS: usize> TimerWheel<T, NUM_LEVELS, NUM_SLOTS> {
     /// Create a new timer wheel
     pub fn new() -> Self {
-        let mut wheel = Self {
-            timers: Slab::with_capacity(NUM_LEVELS * NUM_SLOTS),
-            levels: std::array::from_fn(|_| Level {
-                slots: std::array::from_fn(|_| EntryList::default()),
-                position: 0,
-            }),
-            current_time: 0,
+        let mut uninit_self = MaybeUninit::uninit();
+        Self::init(&mut uninit_self);
+
+        // SAFETY: `Self::init` fully initialised `uninit_self` before call.
+        unsafe { uninit_self.assume_init() }
+    }
+
+    /// Initialise a [`TimerWheel`] in uninitialized memory.
+    ///
+    /// This can be used to avoid excessive stage usage when `uninit_self` is located in
+    /// allocated memory, such as from a `Vec`, `Box` or `Rc`.
+    pub fn init(uninit_self: &mut MaybeUninit<Self>) -> &mut Self {
+        // SAFETY: `uninit_self` points to valid writable memory and we initialise each field before returning.
+        let init_self = unsafe {
+            let ptr = uninit_self.as_mut_ptr();
+            std::ptr::addr_of_mut!((*ptr).timers)
+                .write(Slab::with_capacity(NUM_LEVELS * NUM_SLOTS));
+            for level in 0..NUM_LEVELS {
+                let level_ptr =
+                    (std::ptr::addr_of_mut!((*ptr).levels) as *mut Level<NUM_SLOTS>).add(level);
+                for slot in 0..NUM_SLOTS {
+                    let slot_ptr =
+                        (std::ptr::addr_of_mut!((*level_ptr).slots) as *mut EntryList).add(slot);
+                    slot_ptr.write(Default::default());
+                }
+                std::ptr::addr_of_mut!((*level_ptr).position).write(0);
+            }
+            std::ptr::addr_of_mut!((*ptr).current_time).write(0);
+            uninit_self.assume_init_mut()
         };
 
         // Populate all slots with a head entry - this allows us to remove a timer later without
@@ -165,7 +189,7 @@ impl<T, const NUM_LEVELS: usize, const NUM_SLOTS: usize> TimerWheel<T, NUM_LEVEL
         // to brute-force it.
         for level in 0..NUM_LEVELS {
             for slot in 0..NUM_SLOTS {
-                wheel.levels[level].slots[slot].head = wheel.timers.insert(TimerEntry {
+                init_self.levels[level].slots[slot].head = init_self.timers.insert(TimerEntry {
                     next: EMPTY_INDEX,
                     previous: EMPTY_INDEX,
                     data: TimerEntryData::Head,
@@ -173,7 +197,7 @@ impl<T, const NUM_LEVELS: usize, const NUM_SLOTS: usize> TimerWheel<T, NUM_LEVEL
             }
         }
 
-        wheel
+        init_self
     }
 
     /// Start a timer which expires after the given interval

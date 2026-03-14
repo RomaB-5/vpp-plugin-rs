@@ -146,8 +146,7 @@ unsafe fn vnet_get_config_data<FeatureData: Copy>(
 
         let d = (*cm).config_string_heap.add(index as usize);
 
-        let n = std::mem::size_of::<FeatureData>().next_multiple_of(std::mem::size_of_val(&*d))
-            / std::mem::size_of_val(&*d);
+        let n = std::mem::size_of::<FeatureData>().div_ceil(std::mem::size_of_val(&*d));
 
         // The last u32 is the next index
         let next = *d.add(n);

@@ -17,6 +17,7 @@ use vpp_plugin::{
     vlib::{
         self, BufferIndex,
         counter::{CombinedCounter, CombinedCounterIndex, SimpleCounter, SimpleCounterIndex},
+        main::sync::BarrierRwLock,
         node_generic::{
             FeatureNextNode, GenericFeatureNodeX1, GenericFeatureNodeX4, generic_feature_node_x1,
             generic_feature_node_x4,
@@ -157,11 +158,15 @@ lazy_static! {
     runtime_data_default = TEST_RUNTIME_DATA_INIT,
     format_trace = format_test_trace,
 )]
-struct TestNode;
+struct TestNode {
+    udp_src_port_deny_policy: BarrierRwLock<Option<u16>>,
+}
 
 impl TestNode {
     const fn new() -> Self {
-        Self
+        Self {
+            udp_src_port_deny_policy: BarrierRwLock::new(None),
+        }
     }
 }
 
@@ -201,33 +206,47 @@ impl vlib::node::Node for TestNode {
 
                         let ip_udp: *const IpUdpHeader = b0.current_ptr_mut() as *const IpUdpHeader;
 
-                        let next =
-                            match u16::from_be((*ip_udp).udp.dst_port) {
-                                // 1 falls through into default case to test the simple case
-                                2 => FeatureNextNode::NextFeature,
-                                3 => {
-                                    node.increment_error_counter(vm, TestErrorCounter::Drop, 1);
-                                    TestNextNode::Drop.into()
-                                }
-                                4 => {
-                                    increment_drop_counter_cached(vm, node, 1);
-                                    TestNextNode::Drop.into()
-                                }
-                                5 => {
-                                    SimpleCounterIndex::from_parts(&SIMPLE_COUNTER, 0)
-                                        .increment(vm, 1);
+                        let next = match u16::from_be((*ip_udp).udp.dst_port) {
+                            // 1 falls through into default case to test the simple case
+                            2 => FeatureNextNode::NextFeature,
+                            3 => {
+                                node.increment_error_counter(vm, TestErrorCounter::Drop, 1);
+                                TestNextNode::Drop.into()
+                            }
+                            4 => {
+                                increment_drop_counter_cached(vm, node, 1);
+                                TestNextNode::Drop.into()
+                            }
+                            5 => {
+                                SimpleCounterIndex::from_parts(&SIMPLE_COUNTER, 0).increment(vm, 1);
+                                FeatureNextNode::NextFeature
+                            }
+                            6 => {
+                                CombinedCounterIndex::from_parts(&COMBINED_COUNTER, 0).increment(
+                                    vm,
+                                    1,
+                                    b0.length_in_chain(vm),
+                                );
+                                FeatureNextNode::NextFeature
+                            }
+                            7 => {
+                                if let Some(src_port) = *TEST_NODE.udp_src_port_deny_policy.read(vm)
+                                {
+                                    if u16::from_be((*ip_udp).udp.src_port) == src_port {
+                                        b0.set_error(node, TestErrorCounter::Drop);
+                                        TestNextNode::Drop.into()
+                                    } else {
+                                        FeatureNextNode::NextFeature
+                                    }
+                                } else {
                                     FeatureNextNode::NextFeature
                                 }
-                                6 => {
-                                    CombinedCounterIndex::from_parts(&COMBINED_COUNTER, 0)
-                                        .increment(vm, 1, b0.length_in_chain(vm));
-                                    FeatureNextNode::NextFeature
-                                }
-                                _ => {
-                                    b0.set_error(node, TestErrorCounter::Drop);
-                                    TestNextNode::Drop.into()
-                                }
-                            };
+                            }
+                            _ => {
+                                b0.set_error(node, TestErrorCounter::Drop);
+                                TestNextNode::Drop.into()
+                            }
+                        };
 
                         if unlikely(b0.flags().contains(vlib::BufferFlags::IS_TRACED)) {
                             let t = b0.add_trace(vm, node);
@@ -929,6 +948,18 @@ impl test_api::Handlers for ApiHandler {
         }
         if mp.flags2 != test_types_api::TestDir2::RX | test_types_api::TestDir2::TX {
             return Err(VNET_ERR_INVALID_ARGUMENT.into());
+        }
+        Ok(Default::default())
+    }
+
+    fn test_barrier_rw_lock(
+        vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestBarrierRwLock,
+    ) -> Result<vlibapi::Message<test_api::TestBarrierRwLockReply>, i32> {
+        if mp.enable {
+            *TEST_NODE.udp_src_port_deny_policy.write(vm) = Some(7);
+        } else {
+            *TEST_NODE.udp_src_port_deny_policy.write(vm) = None;
         }
         Ok(Default::default())
     }

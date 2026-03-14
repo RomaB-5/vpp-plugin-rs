@@ -74,14 +74,14 @@ class IntegrationTestCase(VppTestCase):
             reply = str(cli_error)
         self.assert_equal(reply.strip(), expected, "CLI command response")
 
-    def create_packet(self, test_case):
+    def create_packet(self, test_case, sport = 57):
         """create a packet"""
         packet = (
             Ether(
                 src=self.pg0.remote_mac, dst=self.pg0.local_mac
             )
             / IP(src=self.pg0.remote_ip4, dst=self.pg1.remote_ip4, ttl=255)
-            / UDP(dport=test_case)
+            / UDP(dport=test_case, sport=sport)
         )
         return packet
 
@@ -128,6 +128,14 @@ class IntegrationTestCase(VppTestCase):
                 'sw_if_index': sw_if_index,
                 'enable': enable,
                 'node_type': api_node_type,
+            },
+        )
+
+    def barrier_rw_lock(self, enable):
+        self.vapi.api(
+            self.vapi.papi.test_barrier_rw_lock,
+            {
+                'enable': enable,
             },
         )
 
@@ -268,6 +276,41 @@ class IntegrationTestCase(VppTestCase):
         self.assertEqual(new_combined_count[0]["bytes"], combined_count[0]["bytes"] + packet_len)
 
         # Clean up
+        self.enable_disable_api(self.pg0.sw_if_index, False)
+
+    def test_barrier_rw_lock(self):
+        """Make use of the barrier read/write lock"""
+        err = self.statistics.get_err_counter("/err/test/Drop")
+        self.enable_disable_api(self.pg0.sw_if_index, True)
+        self.barrier_rw_lock(True)
+
+        # Send a packet matching the source port policy
+        packet = self.create_packet(7, sport=7)
+        self.logger.info(ppp("Sending packet:", packet))
+        self.pg0.add_stream(packet)
+        self.pg_start()
+
+        self.logger.debug(self.vapi.cli("show trace"))
+
+        # Expect the packet counters to have been incremented by one
+        new_err = self.statistics.get_err_counter("/err/test/Drop")
+        self.assertEqual(new_err, err + 1)
+        err = new_err
+
+        # Send a packet not matching the source port policy
+        packet = self.create_packet(7)
+        self.logger.info(ppp("Sending packet:", packet))
+        self.pg0.add_stream(packet)
+        self.pg_start()
+
+        self.logger.debug(self.vapi.cli("show trace"))
+
+        # Expect the packet counters to be unchanged
+        new_err = self.statistics.get_err_counter("/err/test/Drop")
+        self.assertEqual(new_err, err)
+
+        # Clean up
+        self.barrier_rw_lock(False)
         self.enable_disable_api(self.pg0.sw_if_index, False)
 
     def test_node_x4(self):

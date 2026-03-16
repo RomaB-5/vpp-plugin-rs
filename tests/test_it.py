@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """ Integration tests """
 
+from time import sleep
 import unittest
 
 from scapy.layers.inet import IP
@@ -134,6 +135,14 @@ class IntegrationTestCase(VppTestCase):
     def barrier_rw_lock(self, enable):
         self.vapi.api(
             self.vapi.papi.test_barrier_rw_lock,
+            {
+                'enable': enable,
+            },
+        )
+
+    def process_node(self, enable):
+        self.vapi.api(
+            self.vapi.papi.test_process_node,
             {
                 'enable': enable,
             },
@@ -391,6 +400,16 @@ class IntegrationTestCase(VppTestCase):
 
         # Clean up
         self.enable_disable_api(self.pg0.sw_if_index, False, node_type="x4")
+
+    def test_process_node(self):
+        """Use a process node"""
+        self.process_node(True)
+
+        # TODO: real implementation when the process node does something
+        sleep(5)
+
+        # Clean up
+        self.process_node(False)
 
     def test_vnet_error(self):
         """VNET error being generated and returned from a CLI command"""

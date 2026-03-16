@@ -24,5 +24,7 @@ pub mod mpsc;
 mod tw_timer;
 
 // Re-export these for convenience
-pub use core::{LocalFutureObj, ProcessAsyncContext, ProcessNode, ProcessNodeRegistration, sleep};
-pub use mpsc::channel;
+pub use core::{
+    LocalFutureObj, ProcessAsyncContext, ProcessNode, ProcessNodeRegistration, sleep, timeout,
+};
+pub use mpsc::{Receiver, Sender, channel};

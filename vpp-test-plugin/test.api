@@ -170,6 +170,13 @@ autoreply autoendian define test_barrier_rw_lock
   bool enable;
 };
 
+autoreply autoendian define test_process_node
+{
+  u32 client_index;
+  u32 context;
+  bool enable;
+};
+
 service {
   rpc test_stream_get returns test_stream_get_reply
     stream test_stream_details;

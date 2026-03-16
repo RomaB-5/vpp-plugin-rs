@@ -8,7 +8,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
     ptr::NonNull,
     str::FromStr,
-    sync::atomic::AtomicU64,
+    sync::{LazyLock, Mutex, atomic::AtomicU64},
     time::Duration,
 };
 
@@ -23,7 +23,7 @@ use vpp_plugin::{
             FeatureNextNode, GenericFeatureNodeX1, GenericFeatureNodeX4, generic_feature_node_x1,
             generic_feature_node_x4,
         },
-        process_node::sleep,
+        process_node::{Receiver, Sender, channel, sleep, timeout},
     },
     vlib_cli_command, vlib_init_function, vlib_node, vlib_plugin_register, vlib_process_node,
     vlibapi,
@@ -966,9 +966,35 @@ impl test_api::Handlers for ApiHandler {
         }
         Ok(Default::default())
     }
+
+    fn test_process_node(
+        _vm: &vlib::BarrierHeldMainRef,
+        mp: &test_api::TestProcessNode,
+    ) -> Result<vlibapi::Message<test_api::TestProcessNodeReply>, i32> {
+        if mp.enable {
+            TEST_PROCESS_NODE
+                .channel_sender()
+                .send(ProcessMessage::Enable)
+                .map_err(|_| VNET_ERR_INVALID_ARGUMENT)?;
+        } else {
+            TEST_PROCESS_NODE
+                .channel_sender()
+                .send(ProcessMessage::Disable)
+                .map_err(|_| VNET_ERR_INVALID_ARGUMENT)?;
+        }
+        Ok(Default::default())
+    }
 }
 
 static TEST_PROCESS_NODE: TestProcessNode = TestProcessNode::new();
+
+#[derive(Debug)]
+enum ProcessMessage {
+    Enable,
+    Disable,
+}
+
+type GetOnceProcessMessageReceiver = Mutex<Option<Receiver<ProcessMessage>>>;
 
 #[derive(NextNodes)]
 enum TestProcessNextNode {}
@@ -980,11 +1006,26 @@ enum TestProcessErrorCounter {}
     name = "test-process",
     instance = TEST_PROCESS_NODE,
 )]
-struct TestProcessNode;
+struct TestProcessNode {
+    channel: LazyLock<(Sender<ProcessMessage>, GetOnceProcessMessageReceiver)>,
+}
 
 impl TestProcessNode {
     const fn new() -> Self {
-        Self
+        Self {
+            channel: LazyLock::new(|| {
+                let (sender, receiver) = channel();
+                (sender, Mutex::new(Some(receiver)))
+            }),
+        }
+    }
+
+    fn channel_sender(&self) -> Sender<ProcessMessage> {
+        self.channel.0.clone()
+    }
+
+    fn channel_receiver(&self) -> Receiver<ProcessMessage> {
+        self.channel.1.lock().unwrap().take().unwrap()
     }
 }
 
@@ -996,10 +1037,39 @@ impl vlib::ProcessNode for TestProcessNode {
     type Errors = TestProcessErrorCounter;
 
     async fn function(&self, _vm: &mut vlib::MainRef, _node: &mut vlib::NodeRuntimeRef<Self>) {
+        // Verify operation of is_elapsed method
+        let sleep1 = sleep(Duration::from_secs(0));
+        assert!(sleep1.is_elapsed());
+
+        // Verify some timeout methods
+        let res = timeout(Duration::from_secs(0), sleep(Duration::from_secs(u64::MAX))).await;
+        let e = res.unwrap_err();
+        assert_eq!(e.to_string(), "deadline has elapsed");
+        let mut timeout1 = timeout(Duration::from_secs(0), sleep(Duration::from_secs(u64::MAX)));
+        assert!(!timeout1.get_mut().is_elapsed());
+        assert!(!timeout1.get_ref().is_elapsed());
+        assert!(!timeout1.into_inner().is_elapsed());
+
+        let recv = self.channel_receiver();
+        let mut enabled = false;
         loop {
-            println!("test process node sleeping for 1 second...");
-            sleep(Duration::from_secs(1)).await;
-            println!("... test process node woke up");
+            let message = if enabled {
+                println!("waiting for an event message for up to 100 ms...");
+                let Ok(message) = timeout(Duration::from_millis(100), recv.recv()).await else {
+                    println!("... test process node woke up");
+                    continue;
+                };
+                message
+            } else {
+                recv.recv().await
+            };
+            match message {
+                Some(ProcessMessage::Enable) => enabled = true,
+                Some(ProcessMessage::Disable) => enabled = false,
+                None => unreachable!(
+                    "The sender should never be dropped as it's part of the TEST_PROCESS_NODE singleton"
+                ),
+            }
         }
     }
 }

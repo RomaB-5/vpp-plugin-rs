@@ -23,6 +23,7 @@ use crate::{
 use std::{
     cell::{RefCell, UnsafeCell},
     ffi::c_void,
+    fmt,
     future::Future,
     pin::Pin,
     rc::Rc,
@@ -404,9 +405,100 @@ pub fn sleep(duration: Duration) -> Sleep {
     with_current_async_context(|ctx| Sleep::new_timeout(deadline, ctx))
 }
 
+/// Errors returned by `Timeout`.
+///
+/// This error is returned when a timeout expires before the function was able
+/// to finish.
+#[derive(Debug, PartialEq, Eq)]
+// It may become more complicated in the future
+#[allow(missing_copy_implementations)]
+pub struct Elapsed(());
+
+impl fmt::Display for Elapsed {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        "deadline has elapsed".fmt(fmt)
+    }
+}
+
+impl std::error::Error for Elapsed {}
+
+impl From<Elapsed> for std::io::Error {
+    fn from(_err: Elapsed) -> std::io::Error {
+        std::io::ErrorKind::TimedOut.into()
+    }
+}
+
+/// Apply a timeout to the given `future`
+///
+/// If `future` completes before `duration` has elapsed, then the completed value is returned.
+/// Otherwise, an [`Elapsed`] error is returned and the future is cancelled.
+pub fn timeout<F>(duration: Duration, future: F) -> Timeout<F::IntoFuture>
+where
+    F: IntoFuture,
+{
+    let delay = sleep(duration);
+    Timeout::new_with_delay(future.into_future(), delay)
+}
+
+pin_project! {
+    /// Future returned by [`timeout`](timeout).
+    #[must_use = "futures do nothing unless you `.await` or poll them"]
+    #[derive(Debug)]
+    pub struct Timeout<T> {
+        #[pin]
+        value: T,
+        #[pin]
+        delay: Sleep,
+    }
+}
+
+impl<T> Timeout<T> {
+    pub(crate) fn new_with_delay(value: T, delay: Sleep) -> Timeout<T> {
+        Timeout { value, delay }
+    }
+
+    /// Gets a reference to the underlying value in this timeout.
+    pub fn get_ref(&self) -> &T {
+        &self.value
+    }
+
+    /// Gets a mutable reference to the underlying value in this timeout.
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+
+    /// Consumes this timeout, returning the underlying value.
+    pub fn into_inner(self) -> T {
+        self.value
+    }
+}
+
+impl<T> Future for Timeout<T>
+where
+    T: Future,
+{
+    type Output = Result<T::Output, Elapsed>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let me = self.project();
+
+        // First try polling the value future
+        if let Poll::Ready(v) = me.value.poll(cx) {
+            return Poll::Ready(Ok(v));
+        }
+
+        // Then try polling the delay future
+        match me.delay.poll(cx) {
+            Poll::Ready(()) => Poll::Ready(Err(Elapsed(()))),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::sleep;
+    use super::{Elapsed, sleep};
+
     use std::time::Duration;
 
     #[test]
@@ -415,5 +507,11 @@ mod tests {
     )]
     fn sleep_outside_process_node_panics() {
         std::mem::drop(sleep(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn elapsed_to_std_error() {
+        let e: std::io::Error = Elapsed(()).into();
+        assert_eq!(e.kind(), std::io::ErrorKind::TimedOut);
     }
 }

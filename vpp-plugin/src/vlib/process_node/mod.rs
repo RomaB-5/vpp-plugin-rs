@@ -20,7 +20,9 @@
 //! - **VPP event loop integration**: Suspends using `vlib_process_wait_for_event_or_clock()`
 
 pub mod core;
+pub mod mpsc;
 mod tw_timer;
 
 // Re-export these for convenience
 pub use core::{LocalFutureObj, ProcessAsyncContext, ProcessNode, ProcessNodeRegistration, sleep};
+pub use mpsc::channel;

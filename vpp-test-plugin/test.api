@@ -162,6 +162,14 @@ autoendian autoreply define test_enumflag {
     vl_api_test_dir2_t flags2;
 };
 
+autoreply autoendian define test_barrier_rw_lock
+{
+  u32 client_index;
+  u32 context;
+  // Enable source port policy drop using barrier read/write lock
+  bool enable;
+};
+
 service {
   rpc test_stream_get returns test_stream_get_reply
     stream test_stream_details;

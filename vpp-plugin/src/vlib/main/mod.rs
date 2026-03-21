@@ -7,6 +7,8 @@ use std::ops::Deref;
 
 use crate::bindings::vlib_main_t;
 
+pub mod sync;
+
 /// Reference to VPP per-thread main library context
 ///
 /// This is a safe wrapper around `vlib_main_t`, providing access to its fields.

@@ -8,8 +8,9 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+futures = "0.3.32"
 lazy_static = "1.5.0"
-vpp-plugin = { path = "../vpp-plugin", features = ["process-node"] }
+vpp-plugin = { path = "../vpp-plugin", features = ["process-node", "experimental"] }
 
 [build-dependencies]
 vpp-plugin-api-gen = { path = "../vpp-plugin-api-gen" }

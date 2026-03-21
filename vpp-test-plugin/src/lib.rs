@@ -1,11 +1,13 @@
 //! Test VPP plugin
 //!
 
+use futures::future::{Either, select};
 use lazy_static::lazy_static;
 use std::{
     collections::HashSet,
     fmt,
     net::{Ipv4Addr, Ipv6Addr},
+    pin::pin,
     ptr::NonNull,
     str::FromStr,
     sync::{LazyLock, Mutex, atomic::AtomicU64},
@@ -14,11 +16,15 @@ use std::{
 
 use vpp_plugin::{
     ErrorCounters, NextNodes,
-    bindings::{ip4_header_t, vnet_api_error_t_VNET_API_ERROR_INVALID_VALUE},
+    bindings::{
+        ip4_header_t, vnet_api_error_t_VNET_API_ERROR_INVALID_VALUE,
+        vnet_helper_ip4_header_checksum,
+    },
     vlib::{
         self, BufferIndex,
         counter::{CombinedCounter, CombinedCounterIndex, SimpleCounter, SimpleCounterIndex},
         main::sync::BarrierRwLock,
+        node::NextNodes,
         node_generic::{
             FeatureNextNode, GenericFeatureNodeX1, GenericFeatureNodeX4, generic_feature_node_x1,
             generic_feature_node_x4,
@@ -28,6 +34,7 @@ use vpp_plugin::{
     vlib_cli_command, vlib_init_function, vlib_node, vlib_plugin_register, vlib_process_node,
     vlibapi,
     vnet::{
+        self,
         error::{VNET_ERR_INVALID_ARGUMENT, VnetError},
         types::SwIfIndex,
     },
@@ -47,6 +54,8 @@ mod test_api {
 mod test_types_api {
     include!(concat!(env!("OUT_DIR"), "/src/test_types_api.rs"));
 }
+
+const IP_PROTOCOL_UDP: u8 = 17;
 
 #[repr(C, packed)]
 #[derive(Debug, Default, Copy, Clone)]
@@ -974,7 +983,7 @@ impl test_api::Handlers for ApiHandler {
         if mp.enable {
             TEST_PROCESS_NODE
                 .channel_sender()
-                .send(ProcessMessage::Enable)
+                .send(ProcessMessage::Enable(Ipv4Addr::from_octets(mp.dest.0)))
                 .map_err(|_| VNET_ERR_INVALID_ARGUMENT)?;
         } else {
             TEST_PROCESS_NODE
@@ -990,21 +999,30 @@ static TEST_PROCESS_NODE: TestProcessNode = TestProcessNode::new();
 
 #[derive(Debug)]
 enum ProcessMessage {
-    Enable,
+    Enable(Ipv4Addr),
     Disable,
 }
 
 type GetOnceProcessMessageReceiver = Mutex<Option<Receiver<ProcessMessage>>>;
 
 #[derive(NextNodes)]
-enum TestProcessNextNode {}
+enum TestProcessNextNode {
+    #[next_node = "ip4-lookup"]
+    Ip4Lookup,
+}
 
 #[derive(ErrorCounters)]
-enum TestProcessErrorCounter {}
+enum TestProcessErrorCounter {
+    #[error_counter(description = "Buffer allocation", severity = ERROR)]
+    BufferAllocation,
+}
 
 #[vlib_process_node(
     name = "test-process",
     instance = TEST_PROCESS_NODE,
+    // Determined by trial-and-error - the default log2_stack_bytes of 15 isn't sufficient in the
+    // arm64 tests.
+    log2_stack_bytes = 16,
 )]
 struct TestProcessNode {
     channel: LazyLock<(Sender<ProcessMessage>, GetOnceProcessMessageReceiver)>,
@@ -1027,6 +1045,82 @@ impl TestProcessNode {
     fn channel_receiver(&self) -> Receiver<ProcessMessage> {
         self.channel.1.lock().unwrap().take().unwrap()
     }
+
+    fn send_packet(
+        &self,
+        vm: &mut vlib::MainRef,
+        node: &mut vlib::NodeRuntimeRef<Self>,
+        destination: Ipv4Addr,
+    ) {
+        // Test dropping a buffer
+        drop(match vm.alloc_buffer() {
+            Ok(buffer) => buffer,
+            Err(_) => {
+                node.increment_process_error_counter(
+                    vm,
+                    TestProcessErrorCounter::BufferAllocation,
+                    1,
+                );
+                return;
+            }
+        });
+
+        let mut buffer = match vm.alloc_buffer() {
+            Ok(buffer) => buffer,
+            Err(_) => {
+                node.increment_process_error_counter(
+                    vm,
+                    TestProcessErrorCounter::BufferAllocation,
+                    1,
+                );
+                return;
+            }
+        };
+        let next = TestProcessNextNode::Ip4Lookup;
+        let b = buffer.as_buffer_ref();
+        b.vnet_buffer_mut().set_rx_sw_if_index(SwIfIndex::LOCAL0);
+        // Test accessor
+        assert_eq!(b.vnet_buffer().rx_sw_if_index(), SwIfIndex::LOCAL0);
+        b.vnet_buffer_mut().set_tx_sw_if_index(None);
+        // Test accessor
+        assert_eq!(b.vnet_buffer().tx_sw_if_index(), None);
+        unsafe {
+            b.set_flags(
+                (b.flags().vnet_flags() | vnet::buffer::BufferFlags::LOCALLY_ORIGINATED)
+                    .as_vlib_flags(),
+            );
+            // Verify that there is enough space, but only in tests
+            let buffer_default_data_size = vm.buffer_default_data_size();
+            assert!(buffer_default_data_size >= std::mem::size_of::<IpUdpHeader>() as u32);
+            let ip_udp =
+                b.put_uninit(std::mem::size_of::<IpUdpHeader>() as u16) as *mut IpUdpHeader;
+            (*ip_udp).ip = std::mem::zeroed();
+            (*ip_udp).ip.__bindgen_anon_1.ip_version_and_header_length = 0x45;
+            (*ip_udp).ip.__bindgen_anon_1.ttl = 128;
+            (*ip_udp).ip.__bindgen_anon_1.protocol = IP_PROTOCOL_UDP;
+            (*ip_udp).ip.__bindgen_anon_1.length =
+                (std::mem::size_of::<UdpHeader>() as u16).to_be();
+            (*ip_udp)
+                .ip
+                .__bindgen_anon_1
+                .__bindgen_anon_1
+                .__bindgen_anon_1
+                .dst_address
+                .as_u32 = destination.to_bits().to_be();
+            (*ip_udp).ip.__bindgen_anon_1.checksum =
+                vnet_helper_ip4_header_checksum(std::ptr::addr_of_mut!((*ip_udp).ip));
+            (*ip_udp).udp = UdpHeader {
+                src_port: 8u16.to_be(),
+                dst_port: 8u16.to_be(),
+                length: 0,
+                checksum: 0,
+            };
+        }
+        let (buffer_index, _) = buffer.into_parts();
+        unsafe {
+            vm.buffer_enqueue_to_next(node, &[buffer_index], &[next.into_u16()]);
+        }
+    }
 }
 
 impl vlib::ProcessNode for TestProcessNode {
@@ -1036,7 +1130,7 @@ impl vlib::ProcessNode for TestProcessNode {
 
     type Errors = TestProcessErrorCounter;
 
-    async fn function(&self, _vm: &mut vlib::MainRef, _node: &mut vlib::NodeRuntimeRef<Self>) {
+    async fn function(&self, vm: &mut vlib::MainRef, node: &mut vlib::NodeRuntimeRef<Self>) {
         // Verify operation of is_elapsed method
         let sleep1 = sleep(Duration::from_secs(0));
         assert!(sleep1.is_elapsed());
@@ -1051,21 +1145,38 @@ impl vlib::ProcessNode for TestProcessNode {
         assert!(!timeout1.into_inner().is_elapsed());
 
         let recv = self.channel_receiver();
-        let mut enabled = false;
+        let mut destination = None;
+        // Pre-create the packet send timer so that it's outside the loop.
+        //
+        // If it was inside the loop then any time a message was received on the channel, the
+        // timer would reset, which isn't the behaviour we want.
+        let packet_send_timer = sleep(Duration::from_secs(u64::MAX));
+        // Pin packet_send_timer to tell select below that we promise not to move it to a
+        // different location in memory in between calls to the select function
+        let mut packet_send_timer = pin!(packet_send_timer);
         loop {
-            let message = if enabled {
+            let message = if let Some(destination) = destination {
                 println!("waiting for an event message for up to 100 ms...");
-                let Ok(message) = timeout(Duration::from_millis(100), recv.recv()).await else {
-                    println!("... test process node woke up");
-                    continue;
-                };
-                message
+                match select(recv.recv(), &mut packet_send_timer).await {
+                    Either::Left((message, _)) => message,
+                    Either::Right(_) => {
+                        println!("... sending packet");
+                        self.send_packet(vm, node, destination);
+                        // Reset timer so it will fire continuously
+                        packet_send_timer.set(sleep(Duration::from_millis(100)));
+                        continue;
+                    }
+                }
             } else {
                 recv.recv().await
             };
             match message {
-                Some(ProcessMessage::Enable) => enabled = true,
-                Some(ProcessMessage::Disable) => enabled = false,
+                Some(ProcessMessage::Enable(new_dest)) => {
+                    destination = Some(new_dest);
+                    // Start timer
+                    packet_send_timer.set(sleep(Duration::from_millis(100)));
+                }
+                Some(ProcessMessage::Disable) => destination = None,
                 None => unreachable!(
                     "The sender should never be dropped as it's part of the TEST_PROCESS_NODE singleton"
                 ),

@@ -175,6 +175,7 @@ autoreply autoendian define test_process_node
   u32 client_index;
   u32 context;
   bool enable;
+  vl_api_test_ip4_address_t dest;
 };
 
 service {

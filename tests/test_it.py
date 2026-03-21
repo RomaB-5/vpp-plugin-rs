@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """ Integration tests """
 
+from socket import AF_INET, inet_pton
 from time import sleep
 import unittest
 
@@ -140,11 +141,12 @@ class IntegrationTestCase(VppTestCase):
             },
         )
 
-    def process_node(self, enable):
+    def process_node(self, dest):
         self.vapi.api(
             self.vapi.papi.test_process_node,
             {
-                'enable': enable,
+                'enable': dest is not None,
+                'dest': inet_pton(AF_INET, dest) if dest is not None else bytes([0, 0, 0, 0])
             },
         )
 
@@ -403,13 +405,13 @@ class IntegrationTestCase(VppTestCase):
 
     def test_process_node(self):
         """Use a process node"""
-        self.process_node(True)
+        self.process_node(self.pg1.remote_ip4)
 
-        # TODO: real implementation when the process node does something
-        sleep(5)
+        self.pg1.enable_capture()
+        self.pg1.wait_for_packet(2)
 
         # Clean up
-        self.process_node(False)
+        self.process_node(None)
 
     def test_vnet_error(self):
         """VNET error being generated and returned from a CLI command"""

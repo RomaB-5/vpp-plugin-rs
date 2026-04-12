@@ -1,0 +1,61 @@
+# 0.2.1 (12th April 2026)
+
+### Added
+
+* vpp-plugin: add a read/write lock built on VPP barrier semantics
+
+### Changed
+
+* vpp-plugin: refactor the generic_feature_node_x4
+* vpp-plugin: refactor the generic_feature to use the assume_init_ref instead of transmute
+
+### Fixed
+
+* vnet/buffer: fix clippy lint
+* vlib/node_generic: fix x4 prefetch bounds check
+
+# 0.2.0 (24th January 2026)
+
+### Added
+
+* vlib: add support for simple counters
+* counters: add support for combined counters
+* buffer: add prefetching methods
+* node: add NodeFlags type and NodeRuntime::flags()
+* node_generic: add support for processing four buffers per iteration
+* vpp-plugin-api-gen: implement writing of enums
+* vnet-error: add error constants
+* vec: implement FromIterator and IntoIterator for Vec
+* vpp-plugin-api-gen: support generating code for fixed array fields
+* vlibapi: add Stream struct
+* vpp-plugin-api-gen: support stream messages
+* vpp-plugin-api-gen: generate API enums as packed
+* vlibapi: add Unaligned* types
+* vpp-plugin-api-gen: add support for variable-length arrays in messages
+* vpp-plugin-api-gen: add support for VLAs in typedef blocks
+* vlibapi: add fixed and variable string types for use in API messages
+* vpp-plugin-api-gen: support variable and fixed sized strings
+* vpp-plugin-macros: include arm64 architecture variants
+* vpp-plugin-api-gen: add support for generating enumflag types
+* vpp-plugin-api-gen: support using imported types
+
+### Changed
+
+* vpp-plugin-api-gen: generate newtypes for aliases
+* vpp-plugin-api-gen: make f64 endian swap explicitly no-op
+* vlibapi: allow constructing dynamically-sized messages
+* Change supported VPP version from 25.10 (with patches) to 26.02
+
+### Fixed
+
+* vpp-plugin-macros: fix hardcoded node name in vlib_node macro
+* vpp-plugin-api-gen: fix unused *_calc_size function for typedefs
+* vpp-plugin-api-gen: fix support for unions
+* vppinfra: fix unused variable warning on CPUs other than x86-64
+* buffer: improve docstrings
+* vpp-plugin-api-gen: generate code that compiles with 2024 edition
+* vpp-plugin-macros: vpp version robustness for vlib_plugin_register
+
+# 0.1.0 (21st November 2025)
+
+* Initial version

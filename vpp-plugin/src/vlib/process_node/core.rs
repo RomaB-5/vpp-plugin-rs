@@ -17,21 +17,29 @@ use crate::{
     vlib::{
         MainRef, NodeRuntimeRef,
         node::{ErrorCounters, NextNodes},
+        process_node::tw_timer::{Timer, TimerWheel},
     },
-    vppinfra::tw_timer::TimerWheel,
 };
 use std::{
     cell::{RefCell, UnsafeCell},
     ffi::c_void,
     future::Future,
     pin::Pin,
+    rc::Rc,
     sync::Arc,
     task::{Context, Poll},
+    time::{Duration, Instant},
 };
 
 pub use futures_task::LocalFutureObj;
 
-const TICK_INTERVAL_S: f64 = 1.0;
+// This could be set to 1000 / VLIB_TW_TICKS_PER_SECOND (defined in VPP code), but that is 10μs, which is smaller than
+// the epoll_wait granularity of 1ms (which is called by vlib_file_poll in the main event loop), and so wouldn't be
+// able to be achieved reliably (even with no other Unix processes in the system pre-empting the VPP main thread).
+//
+// So instead, this is just set to 1ms which is the minimum theoretically reliably achievable for process nodes.
+const TICK_INTERVAL_PER_MS: u64 = 1;
+const TICK_INTERVAL_S: f64 = TICK_INTERVAL_PER_MS as f64 / 1000.0;
 
 /// Trait for defining a VPP process (async) node
 pub trait ProcessNode {
@@ -161,17 +169,51 @@ unsafe impl<N: ProcessNode, const N_NEXT_NODES: usize> Sync
 {
 }
 
+/// Async context shared with other objects that need scheduling
+pub(crate) struct ProcessAsyncContextShared {
+    timer_wheel: Rc<RefCell<Box<TimerWheel>>>,
+    waker: Arc<ProcessAsyncContextWaker>,
+    start_time: Instant,
+}
+
+impl ProcessAsyncContextShared {
+    fn new(node_index: u32) -> Self {
+        // Initialise on the heap to avoid excessive stack usage
+        let mut timer_wheel = Box::new_uninit();
+        TimerWheel::init(&mut timer_wheel);
+        // SAFETY: timer_wheel is initialized by TimerWheel::init above
+        let timer_wheel = unsafe { timer_wheel.assume_init() };
+        Self {
+            timer_wheel: Rc::new(RefCell::new(timer_wheel)),
+            waker: Arc::new(ProcessAsyncContextWaker { node_index }),
+            start_time: Instant::now(),
+        }
+    }
+
+    /// Convert an instant in time to number of ticks since the start time
+    ///
+    /// If the instant in time is before the start time, it will be classed as 0 ticks. Times
+    /// greater than [`u64::MAX`] ticks into the future are treated as just [`u64::MAX`] ticks.
+    fn instant_to_ticks(&self, t: Instant) -> u64 {
+        let duration = t.saturating_duration_since(self.start_time);
+        duration
+            .as_millis()
+            .div_ceil(TICK_INTERVAL_PER_MS.into())
+            .try_into()
+            .unwrap_or(u64::MAX)
+    }
+}
+
 pin_project! {
     /// Async context for running a future within a VPP process node.
     ///
     /// This struct holds the state needed to poll a async future from the
     /// VPP process node loop, including a timer wheel for async operations.
     pub struct ProcessAsyncContext<'a> {
-        timer_wheel: RefCell<Box<TimerWheel<u32, 3, 256>>>,
         main_ref: *mut vlib_main_t,
         #[pin]
         future: Option<LocalFutureObj<'a, ()>>,
-        waker: Arc<ProcessAsyncContextWaker>,
+        shared: Rc<ProcessAsyncContextShared>,
     }
 }
 
@@ -182,18 +224,10 @@ impl<'a> ProcessAsyncContext<'a> {
         node: &NodeRuntimeRef<N>,
         future: LocalFutureObj<'a, ()>,
     ) -> Self {
-        // Initialise on the heap to avoid excessive stack usage
-        let mut timer_wheel = Box::new_uninit();
-        TimerWheel::init(&mut timer_wheel);
-        // SAFETY: timer_wheel is initialized by TimerWheel::init above
-        let timer_wheel = unsafe { timer_wheel.assume_init() };
         Self {
-            timer_wheel: RefCell::new(timer_wheel),
             main_ref: vm.as_ptr(),
             future: Some(future),
-            waker: Arc::new(ProcessAsyncContextWaker {
-                node_index: node.node_index(),
-            }),
+            shared: Rc::new(ProcessAsyncContextShared::new(node.node_index())),
         }
     }
 
@@ -253,17 +287,27 @@ unsafe extern "C" fn vpp_plugin_rs_poll_async_coroutine(context: *mut ProcessAsy
     // SAFETY: `context` is guaranteed non-null and points to a valid `ProcessAsyncContext`.
     let mut ctx = unsafe { Pin::new_unchecked(&mut *context) };
 
-    // TODO: tick timer wheel
+    let ticks_since_start = ctx.shared.instant_to_ticks(Instant::now());
+    ctx.shared
+        .timer_wheel
+        .borrow_mut()
+        .expire_timers(ticks_since_start);
 
     let ctx_project = ctx.as_mut().project();
     if let Some(fut) = ctx_project.future.as_pin_mut() {
-        let waker = waker_ref(ctx_project.waker);
+        ASYNC_CONTEXT.with(|tls_ctx| {
+            tls_ctx.replace(Some(ctx_project.shared.clone()));
+        });
+        let waker = waker_ref(&ctx_project.shared.waker);
         let mut executor_context = Context::from_waker(&waker);
         if matches!(fut.poll(&mut executor_context), Poll::Ready(_)) {
             // > Once a future has finished, clients should not poll it again.
             // [https://doc.rust-lang.org/std/future/trait.Future.html]
             ctx.project().future.set(None);
         }
+        ASYNC_CONTEXT.with(|tls_ctx| {
+            tls_ctx.replace(None);
+        });
     }
 }
 
@@ -279,8 +323,97 @@ unsafe extern "C" fn vpp_plugin_rs_poll_async_coroutine(context: *mut ProcessAsy
 unsafe extern "C" fn vpp_plugin_rs_next_timer_duration(context: *mut ProcessAsyncContext) -> f64 {
     // SAFETY: `context` is validated by the caller contract to be non-null and valid.
     let ctx = unsafe { &*context };
-    let next_expiration = ctx.timer_wheel.borrow().next_expiration();
+    let next_expiration = ctx.shared.timer_wheel.borrow().next_expiration();
     next_expiration
         .map(|ticks| ticks as f64 * TICK_INTERVAL_S)
         .unwrap_or(f64::MAX)
+}
+
+thread_local! {
+    /// Async context for process nodes
+    ///
+    /// This is updated before and after suspending a VPP process node and is only valid when
+    /// polling the `ProcessAsyncContext` future.
+    static ASYNC_CONTEXT: RefCell<Option<Rc<ProcessAsyncContextShared>>> = const { RefCell::new(None) };
+}
+
+/// Execute a closure that receives a reference to the current process node async context
+///
+/// The result of the function is that of the closure.
+///
+/// # Panics
+///
+/// If not called from a vpp-plugin-rs process node.
+pub(crate) fn with_current_async_context<F, R>(f: F) -> R
+where
+    F: FnOnce(&Rc<ProcessAsyncContextShared>) -> R,
+{
+    ASYNC_CONTEXT.with(|ctx| {
+        f(ctx.borrow().as_ref().expect(
+            "There is no async context present - must be called from a vpp-plugin-rs process node",
+        ))
+    })
+}
+
+pin_project! {
+    /// Future returned by [`sleep()`]
+    #[project(!Unpin)]
+    #[derive(Debug)]
+    #[must_use = "futures do nothing unless you `.await` or poll them"]
+    pub struct Sleep {
+        // The link between the `Sleep` instance and the timer that drives it.
+        #[pin]
+        entry: Timer,
+    }
+}
+
+impl Sleep {
+    pub(crate) fn new_timeout(deadline: Instant, ctx: &Rc<ProcessAsyncContextShared>) -> Self {
+        let deadline_ticks = ctx.instant_to_ticks(deadline);
+        let entry = Timer::new(ctx.timer_wheel.clone(), deadline_ticks);
+        Self { entry }
+    }
+
+    /// Returns `true` if `Sleep` has elapsed.
+    ///
+    /// A `Sleep` instance is elapsed when the requested duration has elapsed.
+    pub fn is_elapsed(&self) -> bool {
+        self.entry.is_ready()
+    }
+}
+
+impl Future for Sleep {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        self.project().entry.poll(cx)
+    }
+}
+
+/// Waits until `duration` has elapsed.
+///
+/// An asynchronous analog to [`std::thread::sleep`].
+pub fn sleep(duration: Duration) -> Sleep {
+    let deadline = Instant::now().checked_add(duration).unwrap_or_else(|| {
+        // Roughly 30 years from now.
+        // Standard library does not provide a way to obtain max `Instant`
+        // or convert specific date in the future to instant.
+        // 1000 years overflows on macOS, 100 years overflows on FreeBSD.
+        Instant::now() + Duration::from_secs(86400 * 365 * 30)
+    });
+    with_current_async_context(|ctx| Sleep::new_timeout(deadline, ctx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sleep;
+    use std::time::Duration;
+
+    #[test]
+    #[should_panic(
+        expected = "There is no async context present - must be called from a vpp-plugin-rs process node"
+    )]
+    fn sleep_outside_process_node_panics() {
+        std::mem::drop(sleep(Duration::from_secs(1)));
+    }
 }

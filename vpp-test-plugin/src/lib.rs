@@ -9,6 +9,7 @@ use std::{
     ptr::NonNull,
     str::FromStr,
     sync::atomic::AtomicU64,
+    time::Duration,
 };
 
 use vpp_plugin::{
@@ -22,6 +23,7 @@ use vpp_plugin::{
             FeatureNextNode, GenericFeatureNodeX1, GenericFeatureNodeX4, generic_feature_node_x1,
             generic_feature_node_x4,
         },
+        process_node::sleep,
     },
     vlib_cli_command, vlib_init_function, vlib_node, vlib_plugin_register, vlib_process_node,
     vlibapi,
@@ -993,7 +995,13 @@ impl vlib::ProcessNode for TestProcessNode {
 
     type Errors = TestProcessErrorCounter;
 
-    async fn function(&self, _vm: &mut vlib::MainRef, _node: &mut vlib::NodeRuntimeRef<Self>) {}
+    async fn function(&self, _vm: &mut vlib::MainRef, _node: &mut vlib::NodeRuntimeRef<Self>) {
+        loop {
+            println!("test process node sleeping for 1 second...");
+            sleep(Duration::from_secs(1)).await;
+            println!("... test process node woke up");
+        }
+    }
 }
 
 #[vlib_init_function]

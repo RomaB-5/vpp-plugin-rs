@@ -20,6 +20,7 @@ use crate::{
         vlib_node_fn_registration_t, vlib_node_registration_t, vlib_node_runtime_t, vlib_node_t,
     },
     vlib::{MainRef, buffer::BufferRef},
+    vppinfra::VecRef,
 };
 
 /// Max number of vector elements to process at once per node
@@ -257,9 +258,9 @@ pub struct NodeRegistration<N: Node, const N_NEXT_NODES: usize> {
 ///
 /// A `&mut NodeRuntimeRef` corresponds to `vlib_node_runtime_t *` in C.
 #[repr(transparent)]
-pub struct NodeRuntimeRef<N: Node + ?Sized>(foreign_types::Opaque, std::marker::PhantomData<N>);
+pub struct NodeRuntimeRef<N: ?Sized>(foreign_types::Opaque, std::marker::PhantomData<N>);
 
-impl<N: Node> NodeRuntimeRef<N> {
+impl<N> NodeRuntimeRef<N> {
     /// Creates a `&mut NodeRuntimeRef` directly from a pointer
     ///
     /// # Safety
@@ -280,6 +281,31 @@ impl<N: Node> NodeRuntimeRef<N> {
         self as *const _ as *mut _
     }
 
+    /// Node flags
+    #[inline(always)]
+    pub fn flags(&self) -> NodeFlags {
+        // SAFETY: we have a valid pointer to vlib_node_runtime_t
+        unsafe { NodeFlags::from_bits_truncate((*self.as_ptr()).flags) }
+    }
+
+    /// Return the node index VPP has assigned this node
+    pub fn node_index(&self) -> u32 {
+        // SAFETY: we have a valid pointer to vlib_node_runtime_t
+        unsafe { (*self.as_ptr()).node_index }
+    }
+
+    /// Returns the associated node reference
+    pub fn node(&self, vm: &MainRef) -> &NodeRef<N> {
+        // SAFETY: we have a valid pointer to vlib_node_runtime_t, and the node_index field is
+        // set correctly
+        unsafe {
+            let nodes = VecRef::from_raw_mut((*vm.as_ptr()).node_main.nodes);
+            NodeRef::from_ptr_mut(*nodes.get_unchecked(self.node_index() as usize) as *mut _)
+        }
+    }
+}
+
+impl<N: Node> NodeRuntimeRef<N> {
     /// Returns the node-defined runtime data of the node
     pub fn runtime_data(&self) -> &N::RuntimeData {
         // SAFETY: we have a valid pointer to vlib_node_runtime_t, and the runtime_data field is
@@ -294,31 +320,12 @@ impl<N: Node> NodeRuntimeRef<N> {
         unsafe { &mut *((*self.as_ptr()).runtime_data.as_ptr() as *mut N::RuntimeData) }
     }
 
-    /// Returns the associated node reference
-    pub fn node(&self, vm: &MainRef) -> &NodeRef<N> {
-        // SAFETY: we have a valid pointer to vlib_node_runtime_t, and the node_index field is
-        // set correctly
-        unsafe {
-            let node_index = (*self.as_ptr()).node_index;
-            // TODO: use vec_elt
-            let node_ptr = *(*vm.as_ptr()).node_main.nodes.add(node_index as usize);
-            NodeRef::from_ptr_mut(node_ptr)
-        }
-    }
-
     /// Increments the given error counter by the specified amount
     ///
     /// See also [`NodeRef::increment_error_counter`].
     pub fn increment_error_counter(&self, vm: &MainRef, counter: N::Errors, increment: u64) {
         self.node(vm)
             .increment_error_counter(vm, counter, increment)
-    }
-
-    /// Node flags
-    #[inline(always)]
-    pub fn flags(&self) -> NodeFlags {
-        // SAFETY: we have a valid pointer to vlib_node_runtime_t
-        unsafe { NodeFlags::from_bits_truncate((*self.as_ptr()).flags) }
     }
 }
 
@@ -434,9 +441,9 @@ where
 ///
 /// A `&mut NodeRef` corresponds to `vlib_node_t *` in C.
 #[repr(transparent)]
-pub struct NodeRef<N: Node>(foreign_types::Opaque, std::marker::PhantomData<N>);
+pub struct NodeRef<N>(foreign_types::Opaque, std::marker::PhantomData<N>);
 
-impl<N: Node> NodeRef<N> {
+impl<N> NodeRef<N> {
     /// Creates a `&mut NodeRef` directly from a pointer
     ///
     /// # Safety
@@ -455,7 +462,9 @@ impl<N: Node> NodeRef<N> {
     pub fn as_ptr(&self) -> *mut vlib_node_t {
         self as *const _ as *mut _
     }
+}
 
+impl<N: Node> NodeRef<N> {
     /// Increments the given error counter by the specified amount
     ///
     /// This corresponds to the VPP C function `vlib_node_increment_counter`.

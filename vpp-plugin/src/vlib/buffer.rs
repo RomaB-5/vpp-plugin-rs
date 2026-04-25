@@ -688,7 +688,7 @@ impl MainRef {
     /// - Each entry in the `from` slice must be a valid index to a buffer.
     /// - Each entry in the `nexts` slice must be a valid next node index.
     #[inline(always)]
-    pub unsafe fn buffer_enqueue_to_next<N: Node, V: VectorBufferIndex>(
+    pub unsafe fn buffer_enqueue_to_next<N, V: VectorBufferIndex>(
         &self,
         node: &mut NodeRuntimeRef<N>,
         from: &[V],

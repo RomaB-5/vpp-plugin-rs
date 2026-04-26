@@ -57,6 +57,13 @@ bitflags! {
     }
 }
 
+impl BufferFlags {
+    /// Get the VLIB buffer flags from the VNET buffer flags
+    pub fn as_vlib_flags(&self) -> crate::vlib::buffer::BufferFlags {
+        crate::vlib::buffer::BufferFlags::from_bits_retain(self.bits())
+    }
+}
+
 impl crate::vlib::buffer::BufferFlags {
     /// Get the VNET buffer flags from the VLIB buffer flags
     pub fn vnet_flags(&self) -> BufferFlags {

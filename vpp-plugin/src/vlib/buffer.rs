@@ -126,10 +126,12 @@ impl<FeatureData> BufferRef<FeatureData> {
     }
 
     /// Returns the raw pointer to the underlying `vlib_buffer_t`
+    #[inline(always)]
     pub fn as_ptr(&self) -> *mut vlib_buffer_t {
         self as *const _ as *mut _
     }
 
+    #[inline(always)]
     fn as_details(&self) -> &vlib_buffer_t__bindgen_ty_1 {
         // SAFETY: since the reference to self is valid, so must be the pointer and it's safe to
         // use the __bindgen_anon_1 union arm since the union is just present to force alignment
@@ -138,6 +140,7 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe { (*self.as_ptr()).__bindgen_anon_1.as_ref() }
     }
 
+    #[inline(always)]
     fn as_details_mut(&mut self) -> &mut vlib_buffer_t__bindgen_ty_1 {
         // SAFETY: since the reference to self is valid, so must be the pointer and it's safe to
         // use the __bindgen_anon_1 union arm since the union is just present to force alignment.
@@ -146,6 +149,7 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe { (*self.as_ptr()).__bindgen_anon_1.as_mut() }
     }
 
+    #[inline(always)]
     pub(crate) fn as_metadata(&self) -> &vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
         // SAFETY: since the reference to self is valid, so must be the pointer and it's safe to
         // use the __bindgen_anon_1 union arm since the union is just present to force alignment
@@ -154,6 +158,7 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe { self.as_details().__bindgen_anon_1.__bindgen_anon_1.as_ref() }
     }
 
+    #[inline(always)]
     pub(crate) fn as_metadata_mut(
         &mut self,
     ) -> &mut vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
@@ -192,9 +197,23 @@ impl<FeatureData> BufferRef<FeatureData> {
         &mut self.as_metadata_mut().current_length
     }
 
-    /// Buffer flags
+    /// Get the flags set for this buffer
+    #[inline(always)]
     pub fn flags(&self) -> BufferFlags {
         BufferFlags::from_bits_retain(self.as_metadata().flags)
+    }
+
+    /// Set the flags for this buffer
+    ///
+    /// # Safety
+    ///
+    /// [`BufferFlags::NEXT_PRESENT`] must not be set unless there is a next buffer in the chain.
+    /// [`BufferFlags::EXT_HDR_VALID`] must not be set or cleared unless the external buffer manager header is valid
+    /// or not valid respectively.
+    ///
+    #[inline(always)]
+    pub unsafe fn set_flags(&mut self, flags: BufferFlags) {
+        self.as_metadata_mut().flags = flags.bits()
     }
 
     /// Get a pointer to the current data

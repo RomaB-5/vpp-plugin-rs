@@ -105,6 +105,8 @@ impl<N: Node, const N_NEXT_NODES: usize> NodeRegistration<N, N_NEXT_NODES> {
     ///   - `next_nodes` (each entry must be a valid nul-terminated string and length must be at least `n_next_nodes`)
     /// - Other pointers in the registration data must be either valid or null as appropriate.
     /// - `vector_size`, `scalar_size`, and `aux_size` must match the sizes of the corresponding types in `N`.
+    /// - `n_errors` must match the discriminants in N::Errors
+    /// - `n_next_nodes` must match the discriminants in N::NextNodes
     pub unsafe fn register(&'static self) {
         // SAFETY: The safety requirements are documented in the function's safety comment.
         unsafe {

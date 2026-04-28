@@ -8,6 +8,8 @@ use std::{cell::UnsafeCell, sync::atomic::AtomicU64};
 use arrayvec::ArrayVec;
 use bitflags::bitflags;
 
+#[cfg(feature = "process-node")]
+use crate::vlib::ProcessNode;
 use crate::{
     bindings::{
         _vlib_node_registration, VLIB_NODE_FLAG_ADAPTIVE_MODE,
@@ -331,6 +333,24 @@ impl<N: Node> NodeRuntimeRef<N> {
     }
 }
 
+#[cfg(feature = "process-node")]
+impl<N: ProcessNode> NodeRuntimeRef<N> {
+    // Note runtime_data/runtime_data_mut not implemented as they have little benefit for process nodes
+
+    /// Increments the given error counter by the specified amount for process nodes
+    ///
+    /// See also [`NodeRef::increment_process_error_counter`].
+    pub fn increment_process_error_counter(
+        &self,
+        vm: &MainRef,
+        counter: N::Errors,
+        increment: u64,
+    ) {
+        self.node(vm)
+            .increment_process_error_counter(vm, counter, increment)
+    }
+}
+
 /// Reference to a VPP node frame
 ///
 /// A `&mut FrameRef` corresponds to `vlib_frame_t *` in C.
@@ -471,6 +491,32 @@ impl<N: Node> NodeRef<N> {
     ///
     /// This corresponds to the VPP C function `vlib_node_increment_counter`.
     pub fn increment_error_counter(&self, vm: &MainRef, counter: N::Errors, increment: u64) {
+        // SAFETY: we have a valid pointer to vlib_node_t, the error_heap_index field is
+        // set correctly, we are the only writer to counters (because it's per-thread),
+        // and we perform an atomic store to the counter so that concurrent readers cannot see
+        // a partial value.
+        unsafe {
+            let em = &(*vm.as_ptr()).error_main;
+            let node_counter_base_index = (*self.as_ptr()).error_heap_index;
+            let ptr = em
+                .counters
+                .add(node_counter_base_index as usize + counter.into_u16() as usize);
+            AtomicU64::from_ptr(ptr).store(*ptr + increment, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+#[cfg(feature = "process-node")]
+impl<N: ProcessNode> NodeRef<N> {
+    /// Increments the given error counter by the specified amount for process nodes
+    ///
+    /// This corresponds to the VPP C function `vlib_node_increment_counter`.
+    pub fn increment_process_error_counter(
+        &self,
+        vm: &MainRef,
+        counter: N::Errors,
+        increment: u64,
+    ) {
         // SAFETY: we have a valid pointer to vlib_node_t, the error_heap_index field is
         // set correctly, we are the only writer to counters (because it's per-thread),
         // and we perform an atomic store to the counter so that concurrent readers cannot see

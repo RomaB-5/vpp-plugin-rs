@@ -1216,3 +1216,199 @@ pub fn vlib_cli_command(attributes: TokenStream, function: TokenStream) -> Token
         panic!("#[vlib_cli_command] items must be functions");
     }
 }
+
+/// Registers a VPP async process node
+///
+/// Creates a process node that runs an async coroutine, integrated with VPP's
+/// event-driven processing model.
+///
+/// # Attributes
+///
+/// - `name`: (required, string literal) The name of the process node
+/// - `instance`: (required, ident) The instance of the node.
+/// - `runtime_data_default`: (optional, ident) An identifier for a constant value of type
+///   `Node::RuntimeData` to use as the default runtime data for this node.
+/// - `log2_stack_bytes`: (optional, integer literal) Log2 of process stack size in bytes.
+///   Defaults to 0. The value will be set to a minimum value by VPP if smaller.
+///
+/// # Examples
+///
+/// ```
+/// # use std::fmt;
+/// # use vpp_plugin::{vlib::{self, node::Node}, vlib_process_node, ErrorCounters, NextNodes};
+/// # #[derive(NextNodes)]
+/// # enum ExampleProcessNextNode {}
+/// # #[derive(ErrorCounters)]
+/// # enum ExampleProcessErrorCounter {}
+/// static EXAMPLE_PROCESS_NODE: ExampleProcessNode = ExampleProcessNode::new();
+///
+/// #[vlib_process_node(
+///     name = "example-process",
+///     instance = EXAMPLE_PROCESS_NODE,
+/// )]
+/// struct ExampleProcessNode;
+///
+/// impl ExampleProcessNode {
+///     const fn new() -> Self {
+///         Self
+///     }
+/// }
+///
+/// impl vlib::ProcessNode for ExampleProcessNode {
+///     type NextNodes = ExampleProcessNextNode;
+///     type RuntimeData = ();
+///     type Errors = ExampleProcessErrorCounter;
+///
+///     async fn function(&self, vm: &mut vlib::MainRef, node: &mut vlib::NodeRuntimeRef<Self>) {
+///         todo!()
+///     }
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn vlib_process_node(attributes: TokenStream, item: TokenStream) -> TokenStream {
+    #[derive(Default)]
+    struct ProcessNodeAttrs {
+        name: Option<String>,
+        instance: Option<syn::Ident>,
+        runtime_data_default: Option<syn::Ident>,
+        log2_stack_bytes: Option<u16>,
+    }
+
+    impl ProcessNodeAttrs {
+        fn parse(&mut self, meta: syn::meta::ParseNestedMeta) -> syn::Result<()> {
+            if meta.path.is_ident("name") {
+                self.name = Some(meta.value()?.parse::<syn::LitStr>()?.value());
+                Ok(())
+            } else if meta.path.is_ident("log2_stack_bytes") {
+                self.log2_stack_bytes = Some(meta.value()?.parse::<syn::LitInt>()?.base10_parse()?);
+                Ok(())
+            } else if meta.path.is_ident("instance") {
+                self.instance = Some(meta.value()?.parse()?);
+                Ok(())
+            } else if meta.path.is_ident("runtime_data_default") {
+                self.runtime_data_default = Some(meta.value()?.parse()?);
+                Ok(())
+            } else {
+                Err(syn::Error::new(
+                    meta.path.span(),
+                    "Unknown attribute. Valid attributes are: name, instance, log2_stack_bytes and runtime_data_default",
+                ))
+            }
+        }
+    }
+
+    let mut attrs = ProcessNodeAttrs::default();
+    let attr_parser = syn::meta::parser(|meta| attrs.parse(meta));
+    syn::parse_macro_input!(attributes with attr_parser);
+    let ProcessNodeAttrs {
+        name,
+        instance,
+        log2_stack_bytes,
+        runtime_data_default,
+    } = attrs;
+
+    let item: syn::Item = syn::parse_macro_input!(item);
+    if let syn::Item::Struct(syn::ItemStruct {
+        attrs,
+        vis,
+        struct_token,
+        ident,
+        generics,
+        fields,
+        semi_token,
+    }) = item
+    {
+        let name = name.expect("Missing attribute \"name\". This is required.");
+        let name_lit = format!("{}\0", name);
+        let instance = instance.expect("Missing attribute \"instance\". This is required.");
+        let reg_ident =
+            syn::parse_str::<syn::Ident>(format!("{}_NODE_REGISTRATION", ident).as_ref())
+                .expect("Unable to create identifier");
+        let add_node_fn_ident = syn::parse_str::<syn::Ident>(
+            format!("__vlib_add_node_registration_{}", ident).as_ref(),
+        )
+        .expect("Unable to create identifier");
+        let rm_node_fn_ident =
+            syn::parse_str::<syn::Ident>(format!("__vlib_rm_node_registration_{}", ident).as_ref())
+                .expect("Unable to create identifier");
+        let raw_node_fn_ident = syn::parse_str::<syn::Ident>(format!("__fn_{}", ident).as_ref())
+            .expect("Unable to create identifier");
+        let runtime_data = match runtime_data_default {
+            Some(runtime_data_default) => {
+                // It would be ideal to use #runtime_data::default() here, but we cannot call that in a const context and we need to here
+                quote!(::std::ptr::addr_of!(#runtime_data_default) as *mut ::std::os::raw::c_void)
+            }
+            None => quote!({
+                ::vpp_plugin::const_assert!(::std::mem::size_of::<<#ident as ::vpp_plugin::vlib::ProcessNode>::RuntimeData>() == 0);
+                std::ptr::null_mut()
+            }),
+        };
+        let log2_stack_bytes = log2_stack_bytes.unwrap_or_default();
+
+        let output = quote!(
+            #(#attrs)*
+            #vis #struct_token #ident #generics #fields #semi_token
+
+            #[::vpp_plugin::macro_support::ctor::ctor(crate_path = ::vpp_plugin::macro_support::ctor)]
+            fn #add_node_fn_ident() {
+                unsafe {
+                    #reg_ident.register();
+                }
+            }
+
+            #[::vpp_plugin::macro_support::ctor::dtor(crate_path = ::vpp_plugin::macro_support::ctor)]
+            fn #rm_node_fn_ident() {
+                unsafe {
+                    #reg_ident.unregister();
+                }
+            }
+
+            #[doc(hidden)]
+            unsafe extern "C" fn #raw_node_fn_ident(
+                vm: *mut ::vpp_plugin::bindings::vlib_main_t,
+                node: *mut ::vpp_plugin::bindings::vlib_node_runtime_t,
+                frame: *mut ::vpp_plugin::bindings::vlib_frame_t,
+            ) -> ::vpp_plugin::bindings::uword {
+                let fut = <#ident as ::vpp_plugin::vlib::ProcessNode>::function(
+                    &#instance,
+                    ::vpp_plugin::vlib::MainRef::from_ptr_mut(vm),
+                    #reg_ident.node_runtime_from_ptr(node),
+                );
+                let pinned_fut = ::std::pin::pin!(fut);
+                let context = ::vpp_plugin::vlib::process_node::ProcessAsyncContext::new(
+                    ::vpp_plugin::vlib::MainRef::from_ptr_mut(vm),
+                    #reg_ident.node_runtime_from_ptr(node),
+                    ::vpp_plugin::vlib::process_node::LocalFutureObj::new(pinned_fut)
+                );
+                context.run();
+            }
+
+            static #reg_ident: ::vpp_plugin::vlib::process_node::ProcessNodeRegistration<#ident, { <<#ident as ::vpp_plugin::vlib::ProcessNode>::NextNodes as ::vpp_plugin::vlib::node::NextNodes>::C_NAMES.len() }> = ::vpp_plugin::vlib::process_node::ProcessNodeRegistration::new(
+                ::vpp_plugin::bindings::_vlib_node_registration {
+                    function: Some(#raw_node_fn_ident),
+                    name: #name_lit.as_ptr() as *mut ::std::os::raw::c_char,
+                    type_: ::vpp_plugin::bindings::vlib_node_type_t_VLIB_NODE_TYPE_PROCESS,
+                    error_counters: <<#ident as ::vpp_plugin::vlib::ProcessNode>::Errors as ::vpp_plugin::vlib::node::ErrorCounters>::C_DESCRIPTIONS.as_ptr().cast_mut(),
+                    runtime_data: #runtime_data,
+                    runtime_data_bytes: {
+                        ::vpp_plugin::const_assert!(::std::mem::size_of::<<#ident as ::vpp_plugin::vlib::ProcessNode>::RuntimeData>() <= u8::MAX as usize);
+                        ::vpp_plugin::const_assert!(::std::mem::align_of::<<#ident as ::vpp_plugin::vlib::ProcessNode>::RuntimeData>() <= ::vpp_plugin::vlib::node::RUNTIME_DATA_ALIGN);
+                        ::std::mem::size_of::<<#ident as ::vpp_plugin::vlib::ProcessNode>::RuntimeData>() as u8
+                    },
+                    n_errors: <<#ident as ::vpp_plugin::vlib::ProcessNode>::Errors as ::vpp_plugin::vlib::node::ErrorCounters>::C_DESCRIPTIONS.len()
+                        as u16,
+                    n_next_nodes: <<#ident as ::vpp_plugin::vlib::ProcessNode>::NextNodes as ::vpp_plugin::vlib::node::NextNodes>::C_NAMES.len()
+                        as u16,
+                    process_log2_n_stack_bytes: #log2_stack_bytes,
+                    next_nodes: <<#ident as ::vpp_plugin::vlib::ProcessNode>::NextNodes as ::vpp_plugin::vlib::node::NextNodes>::C_NAMES,
+                    ..::vpp_plugin::bindings::_vlib_node_registration::new()
+                });
+        );
+
+        // eprintln!("{}", output);
+
+        output.into()
+    } else {
+        panic!("#[vlib_process_node] items must be structs");
+    }
+}

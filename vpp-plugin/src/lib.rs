@@ -34,6 +34,8 @@ pub mod vnet;
 pub mod vppinfra;
 
 // Re-export macros for convenience
+#[cfg(feature = "process-node")]
+pub use vpp_plugin_macros::vlib_process_node;
 pub use vpp_plugin_macros::{
     ErrorCounters, NextNodes, vlib_cli_command, vlib_init_function, vlib_node,
     vlib_plugin_register, vnet_feature_init,

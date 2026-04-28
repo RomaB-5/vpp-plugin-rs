@@ -23,7 +23,8 @@ use vpp_plugin::{
             generic_feature_node_x4,
         },
     },
-    vlib_cli_command, vlib_init_function, vlib_node, vlib_plugin_register, vlibapi,
+    vlib_cli_command, vlib_init_function, vlib_node, vlib_plugin_register, vlib_process_node,
+    vlibapi,
     vnet::{
         error::{VNET_ERR_INVALID_ARGUMENT, VnetError},
         types::SwIfIndex,
@@ -963,6 +964,36 @@ impl test_api::Handlers for ApiHandler {
         }
         Ok(Default::default())
     }
+}
+
+static TEST_PROCESS_NODE: TestProcessNode = TestProcessNode::new();
+
+#[derive(NextNodes)]
+enum TestProcessNextNode {}
+
+#[derive(ErrorCounters)]
+enum TestProcessErrorCounter {}
+
+#[vlib_process_node(
+    name = "test-process",
+    instance = TEST_PROCESS_NODE,
+)]
+struct TestProcessNode;
+
+impl TestProcessNode {
+    const fn new() -> Self {
+        Self
+    }
+}
+
+impl vlib::ProcessNode for TestProcessNode {
+    type NextNodes = TestProcessNextNode;
+
+    type RuntimeData = ();
+
+    type Errors = TestProcessErrorCounter;
+
+    async fn function(&self, _vm: &mut vlib::MainRef, _node: &mut vlib::NodeRuntimeRef<Self>) {}
 }
 
 #[vlib_init_function]

@@ -19,4 +19,4 @@ quote = "1.0.20"
 syn = { version = "2", features = [ "derive", "full", "parsing", "printing", "proc-macro" ], default-features = false }
 
 [dev-dependencies]
-vpp-plugin = { path = "../vpp-plugin" }
+vpp-plugin = { path = "../vpp-plugin", features = ["process-node"] }

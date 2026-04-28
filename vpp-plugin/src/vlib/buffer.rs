@@ -237,7 +237,7 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe { data.offset(current_data as isize) }
     }
 
-    /// Check if the buffer has space for `l` more bytes
+    /// Check if the buffer has space to advance `l` bytes
     ///
     /// This corresponds to the VPP C API `vlib_buffer_has_space`.
     pub fn has_space(&self, l: i16) -> bool {
@@ -270,6 +270,26 @@ impl<FeatureData> BufferRef<FeatureData> {
             !self.flags().contains(BufferFlags::NEXT_PRESENT)
                 || self.current_length() >= VLIB_BUFFER_MIN_CHAIN_SEG_SIZE as u16
         );
+    }
+
+    /// Append uninitialised data to the end of the current data.
+    ///
+    /// Returns a pointer to the start of the newly appended uninitialised data.
+    ///
+    /// This corresponds to the VPP C function `vlib_buffer_put_uninit`.
+    ///
+    /// # Safety
+    ///
+    /// The current data plus the space requested must not exceed the data size of the buffer
+    /// given during allocation. See [`super::MainRef::buffer_default_data_size`] for buffers
+    /// allocated by [`super::MainRef::alloc_buffer`].
+    ///
+    /// The caller must ensure that the data is correctly initialised before passing the buffer to
+    /// code that assumes it is correctly initialised, such as enqueing the buffer another node.
+    pub unsafe fn put_uninit(&mut self, size: u16) -> *mut u8 {
+        let p = self.tail_mut();
+        *self.current_length_mut() += size;
+        p
     }
 
     /// Get a pointer to the end of the current data
@@ -746,6 +766,15 @@ impl MainRef {
                 Err(BufferAllocError)
             }
         }
+    }
+
+    /// Get the default data size for allocated buffers
+    ///
+    /// This corresponds to the VPP C API `vlib_buffer_get_default_data_size`.
+    pub fn buffer_default_data_size(&self) -> u32 {
+        // SAFETY: we have a reference to self so the pointer must also be valid, and MainRef
+        // creation preconditions mean that the buffer_main point must also be valid.
+        unsafe { (*(*self.as_ptr()).buffer_main).default_data_size }
     }
 }
 

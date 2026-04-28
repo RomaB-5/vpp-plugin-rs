@@ -43,3 +43,5 @@ struct async_context;
 void vlib_helper_process_node_loop(
     vlib_main_t *vm,
     struct async_context *context) __attribute__((noreturn));
+
+u16 vnet_helper_ip4_header_checksum(ip4_header_t *ip);

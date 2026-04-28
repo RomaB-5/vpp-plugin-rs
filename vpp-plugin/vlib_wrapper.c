@@ -143,3 +143,9 @@ void vlib_helper_process_node_loop(
         vec_reset_length(event_data);
     }
 }
+
+u16
+vnet_helper_ip4_header_checksum(ip4_header_t *ip)
+{
+    return ip4_header_checksum(ip);
+}

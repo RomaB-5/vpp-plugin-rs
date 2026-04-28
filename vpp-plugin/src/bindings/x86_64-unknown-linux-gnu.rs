@@ -8275,6 +8275,9 @@ pub struct async_context {
 unsafe extern "C" {
     pub fn vlib_helper_process_node_loop(vm: *mut vlib_main_t, context: *mut async_context) -> !;
 }
+unsafe extern "C" {
+    pub fn vnet_helper_ip4_header_checksum(ip: *mut ip4_header_t) -> u16_;
+}
 pub type __builtin_va_list = [__va_list_tag; 1usize];
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

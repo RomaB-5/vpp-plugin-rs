@@ -30,7 +30,7 @@ use crate::{
 #[cfg(feature = "experimental")]
 use crate::bindings::{vlib_helper_buffer_alloc, vlib_helper_buffer_free};
 #[cfg(feature = "experimental")]
-use std::fmt;
+use std::{fmt, mem::ManuallyDrop};
 
 /// VPP buffer index
 #[repr(transparent)]
@@ -424,8 +424,21 @@ impl<'a> BufferWithContext<'a> {
     /// # Safety
     /// - The buffer index must be valid and the caller must have ownership of the buffer it
     ///   corresponds to.
-    pub unsafe fn from_parts(buffer: u32, vm: &'a MainRef) -> Self {
-        Self { buffer, vm }
+    pub unsafe fn from_parts(buffer: BufferIndex, vm: &'a MainRef) -> Self {
+        Self {
+            buffer: buffer.0,
+            vm,
+        }
+    }
+
+    /// Decomposes a `BufferWithContext` into its component parts
+    ///
+    /// After calling this the caller is responsible for ensuring the buffer gets freed, either
+    /// by calling [`BufferWithContext::from_parts`] or by passing it into another function which
+    /// takes ownership of it and eventually causes it to be freed.
+    pub fn into_parts(self) -> (BufferIndex, &'a MainRef) {
+        let me = ManuallyDrop::new(self);
+        (BufferIndex(me.buffer), me.vm)
     }
 
     /// Get a mutable reference to the buffer
@@ -761,7 +774,7 @@ impl MainRef {
             let mut buffer = 0;
             let res = vlib_helper_buffer_alloc(self.as_ptr(), &mut buffer, 1);
             if res == 1 {
-                Ok(BufferWithContext::from_parts(buffer, self))
+                Ok(BufferWithContext::from_parts(buffer.into(), self))
             } else {
                 Err(BufferAllocError)
             }

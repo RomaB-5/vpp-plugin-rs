@@ -210,9 +210,9 @@ impl<T> ::std::cmp::PartialEq for __BindgenUnionField<T> {
 }
 impl<T> ::std::cmp::Eq for __BindgenUnionField<T> {}
 pub const CLIB_LOG2_CACHE_LINE_BYTES: u32 = 6;
+pub const CLIB_N_PREFETCHES: u32 = 16;
 pub const CLIB_LIB_DIR: &[u8; 21] = b"lib/x86_64-linux-gnu\0";
 pub const CLIB_VECTOR_GROW_BY_ONE: u32 = 0;
-pub const CLIB_MAX_MHEAPS: u32 = 256;
 pub const CLIB_MAX_NUMAS: u32 = 16;
 pub const CLIB_MEM_ERROR: i32 = -1;
 pub const CLIB_MEM_LOG2_MIN_ALIGN: u32 = 3;
@@ -220,8 +220,6 @@ pub const CLIB_MEM_MIN_ALIGN: u32 = 8;
 pub const CLIB_VM_MAP_HDR_NAME_MAX_LEN: u32 = 64;
 pub const VEC_NUMA_UNSPECIFIED: u32 = 255;
 pub const VEC_MIN_ALIGN: u32 = 8;
-pub const UNFORMAT_END_OF_INPUT: i32 = -1;
-pub const UNFORMAT_MORE_INPUT: u32 = 0;
 pub const VLIB_BUFFER_PRE_DATA_SIZE: u32 = 128;
 pub const VLIB_BUFFER_ALIGN: u32 = 64;
 pub const VLIB_BUFFER_ALLOC_FAULT_INJECTOR: u32 = 0;
@@ -267,6 +265,7 @@ pub const VLIB_LOG2_MAIN_LOOPS_PER_STATS_UPDATE: u32 = 7;
 pub const VLIB_MAIN_LOOP_EXIT_NONE: u32 = 0;
 pub const VLIB_MAIN_LOOP_EXIT_PANIC: u32 = 1;
 pub const VLIB_MAIN_LOOP_EXIT_CLI: u32 = 2;
+pub const VLIB_BUFFER_MAX_CLONE: u32 = 255;
 pub const VLIB_BUFFER_LINEARIZE_MAX: u32 = 64;
 pub const VNET_REWRITE_TOTAL_BYTES: u32 = 128;
 pub const VL_API_LITTLE_ENDIAN: u32 = 0;
@@ -485,23 +484,20 @@ impl Default for _clib_mem_vm_map_hdr {
     }
 }
 pub type clib_mem_vm_map_hdr_t = _clib_mem_vm_map_hdr;
-pub const clib_mem_heap_flag_t_CLIB_MEM_HEAP_F_LOCKED: clib_mem_heap_flag_t = 1;
-pub const clib_mem_heap_flag_t_CLIB_MEM_HEAP_F_UNMAP_ON_DESTROY: clib_mem_heap_flag_t = 2;
-pub const clib_mem_heap_flag_t_CLIB_MEM_HEAP_F_TRACED: clib_mem_heap_flag_t = 4;
-pub type clib_mem_heap_flag_t = ::std::os::raw::c_uint;
 #[repr(C)]
-#[derive(Debug)]
-pub struct clib_mem_heap_t<FAM: ?Sized = [::std::os::raw::c_char; 0]> {
-    pub base: *mut ::std::os::raw::c_void,
-    pub mspace: *mut ::std::os::raw::c_void,
-    pub size: uword,
-    pub _bitfield_align_1: [u8; 0],
-    pub _bitfield_1: __BindgenBitfieldUnit<[u8; 2usize]>,
-    pub name: FAM,
+#[derive(Debug, Copy, Clone)]
+pub struct clib_mem_heap_t {
+    _unused: [u8; 0],
 }
-impl clib_mem_heap_t<[::std::os::raw::c_char]> {}
-impl clib_mem_heap_t<[::std::os::raw::c_char; 0]> {}
-impl Default for clib_mem_heap_t<[::std::os::raw::c_char; 0]> {
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct clib_mem_thread_main_t {
+    pub active_heap: *mut clib_mem_heap_t,
+    pub thread_index: clib_thread_index_t,
+    pub next: *mut clib_mem_thread_main_t,
+    pub trace_thread_disable: ::std::os::raw::c_int,
+}
+impl Default for clib_mem_thread_main_t {
     fn default() -> Self {
         let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
         unsafe {
@@ -510,99 +506,18 @@ impl Default for clib_mem_heap_t<[::std::os::raw::c_char; 0]> {
         }
     }
 }
-impl clib_mem_heap_t<[::std::os::raw::c_char; 0]> {
-    #[inline]
-    pub fn log2_page_sz(&self) -> clib_mem_page_sz_t {
-        unsafe { ::std::mem::transmute(self._bitfield_1.get(0usize, 8u8) as u32) }
-    }
-    #[inline]
-    pub fn set_log2_page_sz(&mut self, val: clib_mem_page_sz_t) {
-        unsafe {
-            let val: u32 = ::std::mem::transmute(val);
-            self._bitfield_1.set(0usize, 8u8, val as u64)
-        }
-    }
-    #[inline]
-    pub unsafe fn log2_page_sz_raw(this: *const Self) -> clib_mem_page_sz_t {
-        unsafe {
-            ::std::mem::transmute(<__BindgenBitfieldUnit<[u8; 2usize]>>::raw_get(
-                ::std::ptr::addr_of!((*this)._bitfield_1),
-                0usize,
-                8u8,
-            ) as u32)
-        }
-    }
-    #[inline]
-    pub unsafe fn set_log2_page_sz_raw(this: *mut Self, val: clib_mem_page_sz_t) {
-        unsafe {
-            let val: u32 = ::std::mem::transmute(val);
-            <__BindgenBitfieldUnit<[u8; 2usize]>>::raw_set(
-                ::std::ptr::addr_of_mut!((*this)._bitfield_1),
-                0usize,
-                8u8,
-                val as u64,
-            )
-        }
-    }
-    #[inline]
-    pub fn flags(&self) -> clib_mem_heap_flag_t {
-        unsafe { ::std::mem::transmute(self._bitfield_1.get(8usize, 8u8) as u32) }
-    }
-    #[inline]
-    pub fn set_flags(&mut self, val: clib_mem_heap_flag_t) {
-        unsafe {
-            let val: u32 = ::std::mem::transmute(val);
-            self._bitfield_1.set(8usize, 8u8, val as u64)
-        }
-    }
-    #[inline]
-    pub unsafe fn flags_raw(this: *const Self) -> clib_mem_heap_flag_t {
-        unsafe {
-            ::std::mem::transmute(<__BindgenBitfieldUnit<[u8; 2usize]>>::raw_get(
-                ::std::ptr::addr_of!((*this)._bitfield_1),
-                8usize,
-                8u8,
-            ) as u32)
-        }
-    }
-    #[inline]
-    pub unsafe fn set_flags_raw(this: *mut Self, val: clib_mem_heap_flag_t) {
-        unsafe {
-            let val: u32 = ::std::mem::transmute(val);
-            <__BindgenBitfieldUnit<[u8; 2usize]>>::raw_set(
-                ::std::ptr::addr_of_mut!((*this)._bitfield_1),
-                8usize,
-                8u8,
-                val as u64,
-            )
-        }
-    }
-    #[inline]
-    pub fn new_bitfield_1(
-        log2_page_sz: clib_mem_page_sz_t,
-        flags: clib_mem_heap_flag_t,
-    ) -> __BindgenBitfieldUnit<[u8; 2usize]> {
-        let mut __bindgen_bitfield_unit: __BindgenBitfieldUnit<[u8; 2usize]> = Default::default();
-        __bindgen_bitfield_unit.set(0usize, 8u8, {
-            let log2_page_sz: u32 = unsafe { ::std::mem::transmute(log2_page_sz) };
-            log2_page_sz as u64
-        });
-        __bindgen_bitfield_unit.set(8usize, 8u8, {
-            let flags: u32 = unsafe { ::std::mem::transmute(flags) };
-            flags as u64
-        });
-        __bindgen_bitfield_unit
-    }
-}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct clib_mem_main_t {
+    pub main_heap: *mut clib_mem_heap_t,
+    pub heaps: *mut *mut clib_mem_heap_t,
+    pub threads: *mut clib_mem_thread_main_t,
     pub log2_page_sz: clib_mem_page_sz_t,
     pub log2_default_hugepage_sz: clib_mem_page_sz_t,
     pub log2_sys_default_hugepage_sz: clib_mem_page_sz_t,
+    pub _bitfield_align_1: [u8; 0],
+    pub _bitfield_1: __BindgenBitfieldUnit<[u8; 1usize]>,
     pub numa_node_bitmap: u32_,
-    pub per_cpu_mheaps: [*mut ::std::os::raw::c_void; 256usize],
-    pub per_numa_mheaps: [*mut ::std::os::raw::c_void; 16usize],
     pub first_map: *mut clib_mem_vm_map_hdr_t,
     pub last_map: *mut clib_mem_vm_map_hdr_t,
     pub map_lock: u8_,
@@ -617,8 +532,55 @@ impl Default for clib_mem_main_t {
         }
     }
 }
+impl clib_mem_main_t {
+    #[inline]
+    pub fn alloc_free_intercept(&self) -> u8_ {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(0usize, 1u8) as u8) }
+    }
+    #[inline]
+    pub fn set_alloc_free_intercept(&mut self, val: u8_) {
+        unsafe {
+            let val: u8 = ::std::mem::transmute(val);
+            self._bitfield_1.set(0usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub unsafe fn alloc_free_intercept_raw(this: *const Self) -> u8_ {
+        unsafe {
+            ::std::mem::transmute(<__BindgenBitfieldUnit<[u8; 1usize]>>::raw_get(
+                ::std::ptr::addr_of!((*this)._bitfield_1),
+                0usize,
+                1u8,
+            ) as u8)
+        }
+    }
+    #[inline]
+    pub unsafe fn set_alloc_free_intercept_raw(this: *mut Self, val: u8_) {
+        unsafe {
+            let val: u8 = ::std::mem::transmute(val);
+            <__BindgenBitfieldUnit<[u8; 1usize]>>::raw_set(
+                ::std::ptr::addr_of_mut!((*this)._bitfield_1),
+                0usize,
+                1u8,
+                val as u64,
+            )
+        }
+    }
+    #[inline]
+    pub fn new_bitfield_1(alloc_free_intercept: u8_) -> __BindgenBitfieldUnit<[u8; 1usize]> {
+        let mut __bindgen_bitfield_unit: __BindgenBitfieldUnit<[u8; 1usize]> = Default::default();
+        __bindgen_bitfield_unit.set(0usize, 1u8, {
+            let alloc_free_intercept: u8 = unsafe { ::std::mem::transmute(alloc_free_intercept) };
+            alloc_free_intercept as u64
+        });
+        __bindgen_bitfield_unit
+    }
+}
 unsafe extern "C" {
     pub static mut clib_mem_main: clib_mem_main_t;
+}
+unsafe extern "C" {
+    pub static mut clib_mem_thread_main: clib_mem_thread_main_t;
 }
 unsafe extern "C" {
     pub fn clib_mem_alloc(size: uword) -> *mut ::std::os::raw::c_void;
@@ -709,6 +671,9 @@ unsafe extern "C" {
     pub fn clib_mem_free_s(p: *mut ::std::os::raw::c_void);
 }
 unsafe extern "C" {
+    pub fn clib_mem_thread_init();
+}
+unsafe extern "C" {
     pub fn clib_mem_destroy_heap(heap: *mut clib_mem_heap_t);
 }
 unsafe extern "C" {
@@ -729,30 +694,84 @@ unsafe extern "C" {
         size: uword,
     ) -> *mut ::std::os::raw::c_void;
 }
-unsafe extern "C" {
-    pub fn clib_mem_init_with_page_size(
-        memory_size: uword,
-        log2_page_sz: clib_mem_page_sz_t,
-    ) -> *mut ::std::os::raw::c_void;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct clib_mem_init_ex_args_t {
+    pub base_addr: *mut ::std::os::raw::c_void,
+    pub memory_size: uword,
+    pub log2_page_sz: clib_mem_page_sz_t,
+    pub _bitfield_align_1: [u8; 0],
+    pub _bitfield_1: __BindgenBitfieldUnit<[u8; 1usize]>,
+    pub __bindgen_padding_0: [u8; 3usize],
+}
+impl Default for clib_mem_init_ex_args_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+impl clib_mem_init_ex_args_t {
+    #[inline]
+    pub fn alloc_free_intercept(&self) -> u8_ {
+        unsafe { ::std::mem::transmute(self._bitfield_1.get(0usize, 1u8) as u8) }
+    }
+    #[inline]
+    pub fn set_alloc_free_intercept(&mut self, val: u8_) {
+        unsafe {
+            let val: u8 = ::std::mem::transmute(val);
+            self._bitfield_1.set(0usize, 1u8, val as u64)
+        }
+    }
+    #[inline]
+    pub unsafe fn alloc_free_intercept_raw(this: *const Self) -> u8_ {
+        unsafe {
+            ::std::mem::transmute(<__BindgenBitfieldUnit<[u8; 1usize]>>::raw_get(
+                ::std::ptr::addr_of!((*this)._bitfield_1),
+                0usize,
+                1u8,
+            ) as u8)
+        }
+    }
+    #[inline]
+    pub unsafe fn set_alloc_free_intercept_raw(this: *mut Self, val: u8_) {
+        unsafe {
+            let val: u8 = ::std::mem::transmute(val);
+            <__BindgenBitfieldUnit<[u8; 1usize]>>::raw_set(
+                ::std::ptr::addr_of_mut!((*this)._bitfield_1),
+                0usize,
+                1u8,
+                val as u64,
+            )
+        }
+    }
+    #[inline]
+    pub fn new_bitfield_1(alloc_free_intercept: u8_) -> __BindgenBitfieldUnit<[u8; 1usize]> {
+        let mut __bindgen_bitfield_unit: __BindgenBitfieldUnit<[u8; 1usize]> = Default::default();
+        __bindgen_bitfield_unit.set(0usize, 1u8, {
+            let alloc_free_intercept: u8 = unsafe { ::std::mem::transmute(alloc_free_intercept) };
+            alloc_free_intercept as u64
+        });
+        __bindgen_bitfield_unit
+    }
 }
 unsafe extern "C" {
-    pub fn clib_mem_init_thread_safe(
-        memory: *mut ::std::os::raw::c_void,
-        memory_size: uword,
-    ) -> *mut ::std::os::raw::c_void;
+    pub fn clib_mem_init_ex(args: *mut clib_mem_init_ex_args_t) -> *mut ::std::os::raw::c_void;
 }
 unsafe extern "C" {
     pub fn clib_mem_exit();
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct mheap_trace_t {
+pub struct clib_mem_trace_t {
     pub callers: [*mut ::std::os::raw::c_void; 12usize],
     pub n_allocations: u32_,
     pub n_bytes: u32_,
     pub offset: uword,
 }
-impl Default for mheap_trace_t {
+impl Default for clib_mem_trace_t {
     fn default() -> Self {
         let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
         unsafe {
@@ -768,7 +787,10 @@ unsafe extern "C" {
     pub fn clib_mem_is_traced() -> ::std::os::raw::c_int;
 }
 unsafe extern "C" {
-    pub fn clib_mem_trace_dup(heap: *mut clib_mem_heap_t) -> *mut mheap_trace_t;
+    pub fn clib_mem_trace_dup(heap: *mut clib_mem_heap_t) -> *mut clib_mem_trace_t;
+}
+unsafe extern "C" {
+    pub fn clib_mem_heap_set_trace(h: *mut clib_mem_heap_t, enabled: ::std::os::raw::c_int);
 }
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
@@ -802,6 +824,9 @@ unsafe extern "C" {
     pub fn format_clib_mem_heap(s: *mut u8_, va: *mut va_list) -> *mut u8_;
 }
 unsafe extern "C" {
+    pub fn format_clib_mem_heap_name(s: *mut u8_, va: *mut va_list) -> *mut u8_;
+}
+unsafe extern "C" {
     pub fn format_clib_mem_page_stats(s: *mut u8_, va: *mut va_list) -> *mut u8_;
 }
 unsafe extern "C" {
@@ -810,6 +835,7 @@ unsafe extern "C" {
         log2_page_sz: clib_mem_page_sz_t,
         size: uword,
         fd: ::std::os::raw::c_int,
+        log2_align: u8_,
         offset: uword,
         name: *mut ::std::os::raw::c_char,
     ) -> *mut ::std::os::raw::c_void;
@@ -863,11 +889,7 @@ unsafe extern "C" {
     pub fn clib_mem_get_fd_log2_page_size(fd: ::std::os::raw::c_int) -> clib_mem_page_sz_t;
 }
 unsafe extern "C" {
-    pub fn clib_mem_vm_reserve(
-        start: uword,
-        size: uword,
-        log2_page_sz: clib_mem_page_sz_t,
-    ) -> uword;
+    pub fn clib_mem_vm_reserve(start: uword, size: uword, log2_align: u8_) -> uword;
 }
 unsafe extern "C" {
     pub fn clib_mem_vm_get_paddr(
@@ -891,19 +913,39 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn clib_mem_vm_randomize_va(requested_va: *mut uword, log2_page_size: clib_mem_page_sz_t);
 }
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct clib_mem_trace_main_t {
+    _unused: [u8; 0],
+}
 unsafe extern "C" {
-    pub fn mheap_trace(v: *mut clib_mem_heap_t, enable: ::std::os::raw::c_int);
+    pub fn clib_mem_trace_heap(v: *mut clib_mem_heap_t, enable: ::std::os::raw::c_int);
 }
 unsafe extern "C" {
     pub fn clib_mem_trace_enable_disable(enable: uword) -> uword;
+}
+unsafe extern "C" {
+    pub fn clib_mem_trace_get_current_heap() -> *mut clib_mem_heap_t;
+}
+unsafe extern "C" {
+    pub fn clib_mem_trace_get(heap: *const clib_mem_heap_t, offset: uword, size: uword);
+}
+unsafe extern "C" {
+    pub fn clib_mem_trace_put(heap: *const clib_mem_heap_t, offset: uword, size: uword);
+}
+unsafe extern "C" {
+    pub fn clib_mem_trace_get_main() -> *mut clib_mem_trace_main_t;
+}
+unsafe extern "C" {
+    pub fn format_clib_mem_trace(s: *mut u8_, args: *mut va_list) -> *mut u8_;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct clib_mem_page_stats_t {
     pub log2_page_sz: clib_mem_page_sz_t,
     pub total: uword,
-    pub mapped: uword,
-    pub not_mapped: uword,
+    pub populated: uword,
+    pub not_populated: uword,
     pub per_numa: [uword; 16usize],
     pub unknown: uword,
 }
@@ -2262,6 +2304,9 @@ impl Default for vlib_cli_main_t {
     }
 }
 unsafe extern "C" {
+    pub fn vlib_cli_command_registration_helper(x: *mut vlib_cli_command_t);
+}
+unsafe extern "C" {
     pub fn vlib_cli_output(vm: *mut vlib_main_t, fmt: *mut ::std::os::raw::c_char, ...);
 }
 unsafe extern "C" {
@@ -2362,6 +2407,27 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn vlib_free_combined_counter(cm: *mut vlib_combined_counter_main_t);
 }
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct vlib_log2_histogram_main_t {
+    pub bins: *mut *mut counter_t,
+    pub min_exp: u32_,
+    pub name: *mut ::std::os::raw::c_char,
+    pub stat_segment_name: *mut ::std::os::raw::c_char,
+    pub stats_entry_index: u32_,
+}
+impl Default for vlib_log2_histogram_main_t {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn vlib_validate_log2_histogram(hm: *mut vlib_log2_histogram_main_t, num_bins: u32_);
+}
 pub type vlib_init_function_t =
     ::std::option::Option<unsafe extern "C" fn(vm: *mut vlib_main_t) -> *mut clib_error_t>;
 #[repr(C)]
@@ -2458,7 +2524,8 @@ pub const clib_march_variant_type_t_CLIB_MARCH_VARIANT_TYPE_adl: clib_march_vari
 pub const clib_march_variant_type_t_CLIB_MARCH_VARIANT_TYPE_spr: clib_march_variant_type_t = 7;
 pub const clib_march_variant_type_t_CLIB_MARCH_VARIANT_TYPE_znver3: clib_march_variant_type_t = 8;
 pub const clib_march_variant_type_t_CLIB_MARCH_VARIANT_TYPE_znver4: clib_march_variant_type_t = 9;
-pub const clib_march_variant_type_t_CLIB_MARCH_TYPE_N_VARIANTS: clib_march_variant_type_t = 10;
+pub const clib_march_variant_type_t_CLIB_MARCH_VARIANT_TYPE_znver5: clib_march_variant_type_t = 10;
+pub const clib_march_variant_type_t_CLIB_MARCH_TYPE_N_VARIANTS: clib_march_variant_type_t = 11;
 pub type clib_march_variant_type_t = ::std::os::raw::c_uint;
 #[repr(C)]
 #[derive(Debug, Default)]
@@ -3633,17 +3700,19 @@ impl Default for vlib_main_t {
 }
 #[repr(C)]
 #[repr(align(64))]
+#[derive(Debug)]
 pub struct vlib_global_main_t {
     pub cacheline0: __IncompleteArrayField<u8_>,
     pub vlib_mains: *mut *mut vlib_main_t,
     pub name: *mut ::std::os::raw::c_char,
     pub exec_path: *mut ::std::os::raw::c_char,
     pub argv: *mut *mut u8_,
+    pub startup_config: *mut u8_,
     pub post_mortem_callbacks: *mut ::std::option::Option<unsafe extern "C" fn()>,
     pub need_vlib_worker_thread_node_runtime_update: ::std::os::raw::c_int,
     pub cli_main: vlib_cli_main_t,
     pub node_registrations: *mut vlib_node_registration_t,
-    pub elog_main: elog_main_t,
+    pub elog_main: *mut elog_main_t,
     pub configured_elog_ring_size: u32_,
     pub trace_filter: vlib_trace_filter_t,
     pub init_function_registrations: *mut _vlib_init_function_list_elt_t,
@@ -3690,6 +3759,9 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn vlib_get_elog_main_not_inline() -> *mut elog_main_t;
+}
+unsafe extern "C" {
+    pub fn vlib_update_elog_main(elog_main: *mut elog_main_t);
 }
 pub type vlib_thread_function_t =
     ::std::option::Option<unsafe extern "C" fn(arg: *mut ::std::os::raw::c_void)>;
@@ -6415,6 +6487,7 @@ pub struct vlib_plugin_registration_t {
     pub overrides: [::std::os::raw::c_char; 256usize],
     pub early_init: *const ::std::os::raw::c_char,
     pub description: *const ::std::os::raw::c_char,
+    pub load_after: *mut ::std::os::raw::c_char,
 }
 impl Default for vlib_plugin_registration_t {
     fn default() -> Self {
@@ -6524,6 +6597,7 @@ pub struct vlib_plugin_r2_t {
     pub overrides: vlib_r2_string_t,
     pub early_init: vlib_r2_string_t,
     pub description: vlib_r2_string_t,
+    pub load_after: vlib_r2_string_t,
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -6677,7 +6751,7 @@ pub union ip4_header_t {
     pub __bindgen_anon_2: ip4_header_t__bindgen_ty_2,
     pub __bindgen_anon_3: ip4_header_t__bindgen_ty_3,
 }
-#[repr(C, packed)]
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ip4_header_t__bindgen_ty_1 {
     pub ip_version_and_header_length: u8_,
@@ -6749,7 +6823,7 @@ impl Default for ip4_header_t {
         }
     }
 }
-#[repr(C, packed)]
+#[repr(C)]
 pub struct ip6_header_t {
     pub ip_version_traffic_class_and_flow_label: u32_,
     pub payload_length: u16_,

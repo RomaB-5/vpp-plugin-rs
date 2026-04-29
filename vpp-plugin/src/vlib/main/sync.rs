@@ -52,7 +52,6 @@ impl<T: ?Sized> BarrierRwLock<T> {
     /// # Panics
     ///
     /// Panics if a write lock has already been taken by this thread and not dropped.
-    /// ```
     #[inline(always)]
     pub fn read(&self, vm: &MainRef) -> BarrierRwLockReadGuard<'_, T> {
         let main_thread = vm.thread_index() == 0;
@@ -72,7 +71,6 @@ impl<T: ?Sized> BarrierRwLock<T> {
     ///
     /// Panics if a read or another write lock has already been taken by this thread and not
     /// dropped.
-    /// ```
     #[inline(always)]
     pub fn write(&self, vm: &BarrierHeldMainRef) -> BarrierRwLockWriteGuard<'_, T> {
         // Make sure we match the check in read()

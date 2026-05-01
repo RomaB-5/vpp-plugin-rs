@@ -5,7 +5,7 @@
 //! It also includes buffer allocation and deallocation functions.
 //! The goal is to provide a safe and ergonomic interface for working with VPP buffers.
 
-use std::{hint::assert_unchecked, mem::MaybeUninit};
+use std::{fmt, hint::assert_unchecked, mem::ManuallyDrop, mem::MaybeUninit};
 
 use arrayvec::ArrayVec;
 use bitflags::bitflags;
@@ -16,6 +16,7 @@ use crate::{
         VLIB_BUFFER_MIN_CHAIN_SEG_SIZE, VLIB_BUFFER_NEXT_PRESENT, VLIB_BUFFER_PRE_DATA_SIZE,
         VLIB_BUFFER_TOTAL_LENGTH_VALID, vlib_add_trace, vlib_buffer_func_main, vlib_buffer_t,
         vlib_buffer_t__bindgen_ty_1, vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1,
+        vlib_helper_buffer_alloc, vlib_helper_buffer_free,
     },
     vlib::{
         self, MainRef,
@@ -26,11 +27,6 @@ use crate::{
         likely,
     },
 };
-
-#[cfg(feature = "experimental")]
-use crate::bindings::{vlib_helper_buffer_alloc, vlib_helper_buffer_free};
-#[cfg(feature = "experimental")]
-use std::{fmt, mem::ManuallyDrop};
 
 /// VPP buffer index
 #[repr(transparent)]
@@ -411,13 +407,11 @@ impl<FeatureData> BufferRef<FeatureData> {
 /// Owned buffer (with context)
 ///
 /// The `&MainRef` context is necessary to be able to free the buffer on drop.
-#[cfg(feature = "experimental")]
 pub struct BufferWithContext<'a> {
     buffer: u32,
     vm: &'a MainRef,
 }
 
-#[cfg(feature = "experimental")]
 impl<'a> BufferWithContext<'a> {
     /// Creates a `BufferWithContext` directly from a buffer index and a main reference
     ///
@@ -455,7 +449,6 @@ impl<'a> BufferWithContext<'a> {
     }
 }
 
-#[cfg(feature = "experimental")]
 impl Drop for BufferWithContext<'_> {
     fn drop(&mut self) {
         // SAFETY: we have a reference to MainRef so the pointer must be valid, we pass in a
@@ -469,17 +462,14 @@ impl Drop for BufferWithContext<'_> {
 
 /// Buffer allocation error
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-#[cfg(feature = "experimental")]
 pub struct BufferAllocError;
 
-#[cfg(feature = "experimental")]
 impl fmt::Display for BufferAllocError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "buffer allocation error")
     }
 }
 
-#[cfg(feature = "experimental")]
 impl std::error::Error for BufferAllocError {}
 
 /// u64 x 8
@@ -764,7 +754,6 @@ impl MainRef {
     /// Allocate a single buffer
     ///
     /// This corresponds to the VPP C API of `vlib_alloc_buffers`.
-    #[cfg(feature = "experimental")]
     pub fn alloc_buffer(&self) -> Result<BufferWithContext<'_>, BufferAllocError> {
         // SAFETY: we have a reference to self so the pointer must also be valid, we pass in a
         // buffer pointer that is consistent with the number of buffers asked for, and on exit

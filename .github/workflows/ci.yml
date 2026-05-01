@@ -43,6 +43,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: "cargo doc --no-deps"
         run: cargo doc --no-deps
+        env:
+          # To catch warnings as well as errors by turning them into a job failure
+          RUSTDOCFLAGS: -Dwarnings
 
   tests:
     name: Run tests (${{ matrix.runner }})

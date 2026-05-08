@@ -78,6 +78,9 @@ impl Clone for ip6_header_t {
 pub struct SwIfIndex(u32);
 
 impl SwIfIndex {
+    /// The local0 interface
+    pub const LOCAL0: Self = SwIfIndex::new(0);
+
     /// Creates a software interface index from a `u32` value
     pub const fn new(sw_if_index: u32) -> Self {
         Self(sw_if_index)

@@ -3,6 +3,7 @@
     missing_copy_implementations,
     clippy::undocumented_unsafe_blocks
 )]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! # Framework for writing high-performance VPP plugins in Rust
 //!
@@ -17,6 +18,8 @@
 //! # Features
 //!
 //! The following features are available:
+//! - `process-node`: Enables infrastructure for using process nodes (using async/await) in VPP
+//!   plugins.
 //! - `experimental`: Used for functionality and types that aren't tested or are not part of the
 //!   stable API yet as aspects of them might still be under consideration. APIs conditional on
 //!   this feature may be added, changed or removed without the semantic versioning reflecting
@@ -31,6 +34,8 @@ pub mod vnet;
 pub mod vppinfra;
 
 // Re-export macros for convenience
+#[cfg(feature = "process-node")]
+pub use vpp_plugin_macros::vlib_process_node;
 pub use vpp_plugin_macros::{
     ErrorCounters, NextNodes, vlib_cli_command, vlib_init_function, vlib_node,
     vlib_plugin_register, vnet_feature_init,

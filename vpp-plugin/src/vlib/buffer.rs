@@ -5,7 +5,7 @@
 //! It also includes buffer allocation and deallocation functions.
 //! The goal is to provide a safe and ergonomic interface for working with VPP buffers.
 
-use std::{hint::assert_unchecked, mem::MaybeUninit};
+use std::{fmt, hint::assert_unchecked, mem::ManuallyDrop, mem::MaybeUninit};
 
 use arrayvec::ArrayVec;
 use bitflags::bitflags;
@@ -16,6 +16,7 @@ use crate::{
         VLIB_BUFFER_MIN_CHAIN_SEG_SIZE, VLIB_BUFFER_NEXT_PRESENT, VLIB_BUFFER_PRE_DATA_SIZE,
         VLIB_BUFFER_TOTAL_LENGTH_VALID, vlib_add_trace, vlib_buffer_func_main, vlib_buffer_t,
         vlib_buffer_t__bindgen_ty_1, vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1,
+        vlib_helper_buffer_alloc, vlib_helper_buffer_free,
     },
     vlib::{
         self, MainRef,
@@ -26,11 +27,6 @@ use crate::{
         likely,
     },
 };
-
-#[cfg(feature = "experimental")]
-use crate::bindings::{vlib_helper_buffer_alloc, vlib_helper_buffer_free};
-#[cfg(feature = "experimental")]
-use std::fmt;
 
 /// VPP buffer index
 #[repr(transparent)]
@@ -126,10 +122,12 @@ impl<FeatureData> BufferRef<FeatureData> {
     }
 
     /// Returns the raw pointer to the underlying `vlib_buffer_t`
+    #[inline(always)]
     pub fn as_ptr(&self) -> *mut vlib_buffer_t {
         self as *const _ as *mut _
     }
 
+    #[inline(always)]
     fn as_details(&self) -> &vlib_buffer_t__bindgen_ty_1 {
         // SAFETY: since the reference to self is valid, so must be the pointer and it's safe to
         // use the __bindgen_anon_1 union arm since the union is just present to force alignment
@@ -138,6 +136,7 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe { (*self.as_ptr()).__bindgen_anon_1.as_ref() }
     }
 
+    #[inline(always)]
     fn as_details_mut(&mut self) -> &mut vlib_buffer_t__bindgen_ty_1 {
         // SAFETY: since the reference to self is valid, so must be the pointer and it's safe to
         // use the __bindgen_anon_1 union arm since the union is just present to force alignment.
@@ -146,6 +145,7 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe { (*self.as_ptr()).__bindgen_anon_1.as_mut() }
     }
 
+    #[inline(always)]
     pub(crate) fn as_metadata(&self) -> &vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
         // SAFETY: since the reference to self is valid, so must be the pointer and it's safe to
         // use the __bindgen_anon_1 union arm since the union is just present to force alignment
@@ -154,6 +154,7 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe { self.as_details().__bindgen_anon_1.__bindgen_anon_1.as_ref() }
     }
 
+    #[inline(always)]
     pub(crate) fn as_metadata_mut(
         &mut self,
     ) -> &mut vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
@@ -192,9 +193,23 @@ impl<FeatureData> BufferRef<FeatureData> {
         &mut self.as_metadata_mut().current_length
     }
 
-    /// Buffer flags
+    /// Get the flags set for this buffer
+    #[inline(always)]
     pub fn flags(&self) -> BufferFlags {
         BufferFlags::from_bits_retain(self.as_metadata().flags)
+    }
+
+    /// Set the flags for this buffer
+    ///
+    /// # Safety
+    ///
+    /// [`BufferFlags::NEXT_PRESENT`] must not be set unless there is a next buffer in the chain.
+    /// [`BufferFlags::EXT_HDR_VALID`] must not be set or cleared unless the external buffer manager header is valid
+    /// or not valid respectively.
+    ///
+    #[inline(always)]
+    pub unsafe fn set_flags(&mut self, flags: BufferFlags) {
+        self.as_metadata_mut().flags = flags.bits()
     }
 
     /// Get a pointer to the current data
@@ -218,7 +233,7 @@ impl<FeatureData> BufferRef<FeatureData> {
         unsafe { data.offset(current_data as isize) }
     }
 
-    /// Check if the buffer has space for `l` more bytes
+    /// Check if the buffer has space to advance `l` bytes
     ///
     /// This corresponds to the VPP C API `vlib_buffer_has_space`.
     pub fn has_space(&self, l: i16) -> bool {
@@ -251,6 +266,26 @@ impl<FeatureData> BufferRef<FeatureData> {
             !self.flags().contains(BufferFlags::NEXT_PRESENT)
                 || self.current_length() >= VLIB_BUFFER_MIN_CHAIN_SEG_SIZE as u16
         );
+    }
+
+    /// Append uninitialised data to the end of the current data.
+    ///
+    /// Returns a pointer to the start of the newly appended uninitialised data.
+    ///
+    /// This corresponds to the VPP C function `vlib_buffer_put_uninit`.
+    ///
+    /// # Safety
+    ///
+    /// The current data plus the space requested must not exceed the data size of the buffer
+    /// given during allocation. See [`super::MainRef::buffer_default_data_size`] for buffers
+    /// allocated by [`super::MainRef::alloc_buffer`].
+    ///
+    /// The caller must ensure that the data is correctly initialised before passing the buffer to
+    /// code that assumes it is correctly initialised, such as enqueing the buffer another node.
+    pub unsafe fn put_uninit(&mut self, size: u16) -> *mut u8 {
+        let p = self.tail_mut();
+        *self.current_length_mut() += size;
+        p
     }
 
     /// Get a pointer to the end of the current data
@@ -372,21 +407,32 @@ impl<FeatureData> BufferRef<FeatureData> {
 /// Owned buffer (with context)
 ///
 /// The `&MainRef` context is necessary to be able to free the buffer on drop.
-#[cfg(feature = "experimental")]
 pub struct BufferWithContext<'a> {
     buffer: u32,
     vm: &'a MainRef,
 }
 
-#[cfg(feature = "experimental")]
 impl<'a> BufferWithContext<'a> {
     /// Creates a `BufferWithContext` directly from a buffer index and a main reference
     ///
     /// # Safety
     /// - The buffer index must be valid and the caller must have ownership of the buffer it
     ///   corresponds to.
-    pub unsafe fn from_parts(buffer: u32, vm: &'a MainRef) -> Self {
-        Self { buffer, vm }
+    pub unsafe fn from_parts(buffer: BufferIndex, vm: &'a MainRef) -> Self {
+        Self {
+            buffer: buffer.0,
+            vm,
+        }
+    }
+
+    /// Decomposes a `BufferWithContext` into its component parts
+    ///
+    /// After calling this the caller is responsible for ensuring the buffer gets freed, either
+    /// by calling [`BufferWithContext::from_parts`] or by passing it into another function which
+    /// takes ownership of it and eventually causes it to be freed.
+    pub fn into_parts(self) -> (BufferIndex, &'a MainRef) {
+        let me = ManuallyDrop::new(self);
+        (BufferIndex(me.buffer), me.vm)
     }
 
     /// Get a mutable reference to the buffer
@@ -403,7 +449,6 @@ impl<'a> BufferWithContext<'a> {
     }
 }
 
-#[cfg(feature = "experimental")]
 impl Drop for BufferWithContext<'_> {
     fn drop(&mut self) {
         // SAFETY: we have a reference to MainRef so the pointer must be valid, we pass in a
@@ -417,17 +462,14 @@ impl Drop for BufferWithContext<'_> {
 
 /// Buffer allocation error
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-#[cfg(feature = "experimental")]
 pub struct BufferAllocError;
 
-#[cfg(feature = "experimental")]
 impl fmt::Display for BufferAllocError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "buffer allocation error")
     }
 }
 
-#[cfg(feature = "experimental")]
 impl std::error::Error for BufferAllocError {}
 
 /// u64 x 8
@@ -688,7 +730,7 @@ impl MainRef {
     /// - Each entry in the `from` slice must be a valid index to a buffer.
     /// - Each entry in the `nexts` slice must be a valid next node index.
     #[inline(always)]
-    pub unsafe fn buffer_enqueue_to_next<N: Node, V: VectorBufferIndex>(
+    pub unsafe fn buffer_enqueue_to_next<N, V: VectorBufferIndex>(
         &self,
         node: &mut NodeRuntimeRef<N>,
         from: &[V],
@@ -712,7 +754,6 @@ impl MainRef {
     /// Allocate a single buffer
     ///
     /// This corresponds to the VPP C API of `vlib_alloc_buffers`.
-    #[cfg(feature = "experimental")]
     pub fn alloc_buffer(&self) -> Result<BufferWithContext<'_>, BufferAllocError> {
         // SAFETY: we have a reference to self so the pointer must also be valid, we pass in a
         // buffer pointer that is consistent with the number of buffers asked for, and on exit
@@ -722,11 +763,20 @@ impl MainRef {
             let mut buffer = 0;
             let res = vlib_helper_buffer_alloc(self.as_ptr(), &mut buffer, 1);
             if res == 1 {
-                Ok(BufferWithContext::from_parts(buffer, self))
+                Ok(BufferWithContext::from_parts(buffer.into(), self))
             } else {
                 Err(BufferAllocError)
             }
         }
+    }
+
+    /// Get the default data size for allocated buffers
+    ///
+    /// This corresponds to the VPP C API `vlib_buffer_get_default_data_size`.
+    pub fn buffer_default_data_size(&self) -> u32 {
+        // SAFETY: we have a reference to self so the pointer must also be valid, and MainRef
+        // creation preconditions mean that the buffer_main point must also be valid.
+        unsafe { (*(*self.as_ptr()).buffer_main).default_data_size }
     }
 }
 

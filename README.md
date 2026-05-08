@@ -24,10 +24,6 @@ At the moment, interface and crypto engine plugins are not supported, only plugi
 
 Only VPP 26.02 is currently supported. Later versions may work, but small changes may be required.
 
-## Short term goals
-
-- Process nodes using async Rust
-
 ## Longer term goals
 
 - Replace Python tests with tests that use VPP client Rust crates (https://github.com/ayourtch/vpp-api)

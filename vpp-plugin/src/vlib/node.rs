@@ -8,6 +8,8 @@ use std::{cell::UnsafeCell, sync::atomic::AtomicU64};
 use arrayvec::ArrayVec;
 use bitflags::bitflags;
 
+#[cfg(feature = "process-node")]
+use crate::vlib::ProcessNode;
 use crate::{
     bindings::{
         _vlib_node_registration, VLIB_NODE_FLAG_ADAPTIVE_MODE,
@@ -20,6 +22,7 @@ use crate::{
         vlib_node_fn_registration_t, vlib_node_registration_t, vlib_node_runtime_t, vlib_node_t,
     },
     vlib::{MainRef, buffer::BufferRef},
+    vppinfra::VecRef,
 };
 
 /// Max number of vector elements to process at once per node
@@ -104,6 +107,8 @@ impl<N: Node, const N_NEXT_NODES: usize> NodeRegistration<N, N_NEXT_NODES> {
     ///   - `next_nodes` (each entry must be a valid nul-terminated string and length must be at least `n_next_nodes`)
     /// - Other pointers in the registration data must be either valid or null as appropriate.
     /// - `vector_size`, `scalar_size`, and `aux_size` must match the sizes of the corresponding types in `N`.
+    /// - `n_errors` must match the discriminants in N::Errors
+    /// - `n_next_nodes` must match the discriminants in N::NextNodes
     pub unsafe fn register(&'static self) {
         // SAFETY: The safety requirements are documented in the function's safety comment.
         unsafe {
@@ -257,9 +262,9 @@ pub struct NodeRegistration<N: Node, const N_NEXT_NODES: usize> {
 ///
 /// A `&mut NodeRuntimeRef` corresponds to `vlib_node_runtime_t *` in C.
 #[repr(transparent)]
-pub struct NodeRuntimeRef<N: Node + ?Sized>(foreign_types::Opaque, std::marker::PhantomData<N>);
+pub struct NodeRuntimeRef<N: ?Sized>(foreign_types::Opaque, std::marker::PhantomData<N>);
 
-impl<N: Node> NodeRuntimeRef<N> {
+impl<N> NodeRuntimeRef<N> {
     /// Creates a `&mut NodeRuntimeRef` directly from a pointer
     ///
     /// # Safety
@@ -280,6 +285,31 @@ impl<N: Node> NodeRuntimeRef<N> {
         self as *const _ as *mut _
     }
 
+    /// Node flags
+    #[inline(always)]
+    pub fn flags(&self) -> NodeFlags {
+        // SAFETY: we have a valid pointer to vlib_node_runtime_t
+        unsafe { NodeFlags::from_bits_truncate((*self.as_ptr()).flags) }
+    }
+
+    /// Return the node index VPP has assigned this node
+    pub fn node_index(&self) -> u32 {
+        // SAFETY: we have a valid pointer to vlib_node_runtime_t
+        unsafe { (*self.as_ptr()).node_index }
+    }
+
+    /// Returns the associated node reference
+    pub fn node(&self, vm: &MainRef) -> &NodeRef<N> {
+        // SAFETY: we have a valid pointer to vlib_node_runtime_t, and the node_index field is
+        // set correctly
+        unsafe {
+            let nodes = VecRef::from_raw_mut((*vm.as_ptr()).node_main.nodes);
+            NodeRef::from_ptr_mut(*nodes.get_unchecked(self.node_index() as usize) as *mut _)
+        }
+    }
+}
+
+impl<N: Node> NodeRuntimeRef<N> {
     /// Returns the node-defined runtime data of the node
     pub fn runtime_data(&self) -> &N::RuntimeData {
         // SAFETY: we have a valid pointer to vlib_node_runtime_t, and the runtime_data field is
@@ -294,18 +324,6 @@ impl<N: Node> NodeRuntimeRef<N> {
         unsafe { &mut *((*self.as_ptr()).runtime_data.as_ptr() as *mut N::RuntimeData) }
     }
 
-    /// Returns the associated node reference
-    pub fn node(&self, vm: &MainRef) -> &NodeRef<N> {
-        // SAFETY: we have a valid pointer to vlib_node_runtime_t, and the node_index field is
-        // set correctly
-        unsafe {
-            let node_index = (*self.as_ptr()).node_index;
-            // TODO: use vec_elt
-            let node_ptr = *(*vm.as_ptr()).node_main.nodes.add(node_index as usize);
-            NodeRef::from_ptr_mut(node_ptr)
-        }
-    }
-
     /// Increments the given error counter by the specified amount
     ///
     /// See also [`NodeRef::increment_error_counter`].
@@ -313,12 +331,23 @@ impl<N: Node> NodeRuntimeRef<N> {
         self.node(vm)
             .increment_error_counter(vm, counter, increment)
     }
+}
 
-    /// Node flags
-    #[inline(always)]
-    pub fn flags(&self) -> NodeFlags {
-        // SAFETY: we have a valid pointer to vlib_node_runtime_t
-        unsafe { NodeFlags::from_bits_truncate((*self.as_ptr()).flags) }
+#[cfg(feature = "process-node")]
+impl<N: ProcessNode> NodeRuntimeRef<N> {
+    // Note runtime_data/runtime_data_mut not implemented as they have little benefit for process nodes
+
+    /// Increments the given error counter by the specified amount for process nodes
+    ///
+    /// See also [`NodeRef::increment_process_error_counter`].
+    pub fn increment_process_error_counter(
+        &self,
+        vm: &MainRef,
+        counter: N::Errors,
+        increment: u64,
+    ) {
+        self.node(vm)
+            .increment_process_error_counter(vm, counter, increment)
     }
 }
 
@@ -434,9 +463,9 @@ where
 ///
 /// A `&mut NodeRef` corresponds to `vlib_node_t *` in C.
 #[repr(transparent)]
-pub struct NodeRef<N: Node>(foreign_types::Opaque, std::marker::PhantomData<N>);
+pub struct NodeRef<N>(foreign_types::Opaque, std::marker::PhantomData<N>);
 
-impl<N: Node> NodeRef<N> {
+impl<N> NodeRef<N> {
     /// Creates a `&mut NodeRef` directly from a pointer
     ///
     /// # Safety
@@ -455,11 +484,39 @@ impl<N: Node> NodeRef<N> {
     pub fn as_ptr(&self) -> *mut vlib_node_t {
         self as *const _ as *mut _
     }
+}
 
+impl<N: Node> NodeRef<N> {
     /// Increments the given error counter by the specified amount
     ///
     /// This corresponds to the VPP C function `vlib_node_increment_counter`.
     pub fn increment_error_counter(&self, vm: &MainRef, counter: N::Errors, increment: u64) {
+        // SAFETY: we have a valid pointer to vlib_node_t, the error_heap_index field is
+        // set correctly, we are the only writer to counters (because it's per-thread),
+        // and we perform an atomic store to the counter so that concurrent readers cannot see
+        // a partial value.
+        unsafe {
+            let em = &(*vm.as_ptr()).error_main;
+            let node_counter_base_index = (*self.as_ptr()).error_heap_index;
+            let ptr = em
+                .counters
+                .add(node_counter_base_index as usize + counter.into_u16() as usize);
+            AtomicU64::from_ptr(ptr).store(*ptr + increment, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+#[cfg(feature = "process-node")]
+impl<N: ProcessNode> NodeRef<N> {
+    /// Increments the given error counter by the specified amount for process nodes
+    ///
+    /// This corresponds to the VPP C function `vlib_node_increment_counter`.
+    pub fn increment_process_error_counter(
+        &self,
+        vm: &MainRef,
+        counter: N::Errors,
+        increment: u64,
+    ) {
         // SAFETY: we have a valid pointer to vlib_node_t, the error_heap_index field is
         // set correctly, we are the only writer to counters (because it's per-thread),
         // and we perform an atomic store to the counter so that concurrent readers cannot see

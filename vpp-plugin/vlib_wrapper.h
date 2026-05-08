@@ -37,3 +37,11 @@ void vl_api_helper_send_msg(vl_api_registration_t *rp, u8 *elem);
 
 void vlib_helper_zero_simple_counter(vlib_simple_counter_main_t * cm, u32 index);
 void vlib_helper_zero_combined_counter(vlib_combined_counter_main_t * cm, u32 index);
+
+struct async_context;
+
+void vlib_helper_process_node_loop(
+    vlib_main_t *vm,
+    struct async_context *context) __attribute__((noreturn));
+
+u16 vnet_helper_ip4_header_checksum(ip4_header_t *ip);

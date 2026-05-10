@@ -265,7 +265,10 @@ impl<T: ?Sized> Drop for BarrierRwLockWriteGuard<'_, T> {
 // Note: no Send implementation as it's not safe to modify `self.lock.writer` on Drop and sending
 // the write guard across threads has limited usefulness.
 
-// SAFETY: `BarrierRwLockWriteGuard` provides exclusive write access and is Sync for `T: Sync`.
+// SAFETY: `BarrierRwLockWriteGuard` ensures exclusive write access to the protected data
+// during its lifetime via VPP's barrier mechanism, which prevents concurrent access from
+// worker threads. For `T: Sync`, the guard can be safely shared across threads because
+// the underlying data is `Sync` and the barrier guarantees no conflicting accesses occur.
 unsafe impl<T: ?Sized + Sync> Sync for BarrierRwLockWriteGuard<'_, T> {}
 
 impl<T: ?Sized> Deref for BarrierRwLockWriteGuard<'_, T> {

@@ -176,10 +176,15 @@ impl<FeatureData> crate::vlib::BufferRef<FeatureData> {
 ///
 /// # Safety
 ///
-/// - `cm` must be a valid pointer.
-/// - `*config_index` must be a valid config index on calling.
-/// - `FeatureData` must match the type the config data was created with (and must match the
-///   index that was allocated for it).
+/// - `cm` must be a valid pointer to a `vnet_config_main_t` structure.
+/// - `(*cm).config_string_heap` must be a valid pointer to a contiguous heap of `u32` values.
+/// - `*config_index` must be a valid index into the heap: `index + (size_of::<FeatureData>() /
+///   size_of::<u32>()) + 1 <= heap_length` must be satisfied, where `heap_length` is the
+///   number of `u32` elements in the heap. Additionally, the memory at
+///   `(*cm).config_string_heap.add(index)` must be properly aligned for `FeatureData` and
+///   contain valid data of that type, followed by a valid `u32` next-index value.
+/// - `FeatureData` must exactly match the type that was stored at this config index during
+///   configuration creation, including any alignment and representation requirements.
 #[inline(always)]
 unsafe fn vnet_get_config_data<FeatureData: Copy>(
     cm: *const vnet_config_main_t,

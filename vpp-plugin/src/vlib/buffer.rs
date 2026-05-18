@@ -18,6 +18,7 @@ use crate::{
         vlib_buffer_t__bindgen_ty_1, vlib_buffer_t__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1,
         vlib_helper_buffer_alloc, vlib_helper_buffer_free,
     },
+    const_assert,
     vlib::{
         self, MainRef,
         node::{ErrorCounters, Node, NodeRuntimeRef, VectorBufferIndex},
@@ -584,6 +585,9 @@ impl MainRef {
         unsafe {
             debug_assert!(from_indices.len() <= N);
             assert_unchecked(from_indices.len() <= N);
+            // The vector operations below compute a pointer in terms of u64, i.e. assume that u64
+            // is a pointer-sized type the same as usize.
+            const_assert!(std::mem::size_of::<usize>() == std::mem::size_of::<u64>());
 
             #[cfg(debug_assertions)]
             for from_index in from_indices {
@@ -792,7 +796,10 @@ mod tests {
     #[test]
     fn get_buffers() {
         let buffer = vlib_buffer_t::default();
-        let buffers = [buffer; 119];
+        // This is picked deliberately to not be 128 - 8 - 1 to be the worst case in terms of maximising the code
+        // paths that need to be taken
+        const BUFFERS_N: usize = 119;
+        let buffers = [buffer; BUFFERS_N];
         let buffer_indices: ArrayVec<u32, 128> = (0..buffers.len() as u32)
             .map(|n| {
                 n * (std::mem::size_of::<vlib_buffer_t>() as u32 >> CLIB_LOG2_CACHE_LINE_BYTES)
@@ -813,8 +820,7 @@ mod tests {
             let mut to = ArrayVec::new();
             let main_ref = MainRef::from_ptr_mut(std::ptr::addr_of_mut!(main));
             main_ref.get_buffers::<(), FRAME_SIZE>(&buffer_indices, &mut to);
-            let expected: Vec<&vlib_buffer_t> = buffers.iter().collect();
-            assert_eq!(to.len(), expected.len());
+            assert_eq!(to.len(), BUFFERS_N);
             for (i, buf_ref) in to.iter().enumerate() {
                 assert!(
                     buf_ref.as_ptr().cast_const() == std::ptr::addr_of!(buffers[i]),

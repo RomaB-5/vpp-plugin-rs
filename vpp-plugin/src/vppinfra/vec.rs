@@ -1007,7 +1007,7 @@ impl<T: Clone> Clone for IntoIter<T> {
         // ptr.add(i) is within the initialized remaining elements.
         unsafe {
             for i in 0..self.len {
-                let item = ptr::read(self.ptr.add(i));
+                let item = &*self.ptr.add(i);
                 new_vec.push(item.clone());
             }
         }

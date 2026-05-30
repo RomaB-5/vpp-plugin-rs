@@ -1,3 +1,9 @@
+# 0.2.1 (30th May 2026)
+
+### Fixed
+
+* Fix clippy lint
+
 # 0.2.0 (24th January 2026)
 
 ### Added

@@ -1,3 +1,35 @@
+# 0.2.2 (30th May 2026)
+
+### Added
+
+* vppinfra: add timer wheel implementation
+* Add support for process nodes
+* vnet: types: add SwIfIndex::LOCAL0 constant
+* vnet: buffer: add tx/rx sw_if_index accessors
+* vlib: buffer: support setting buffer flags
+* vnet: buffer: allow converting from vnet buffer flags to vlib
+* vlib: buffer: support appending data to buffers
+* vlib: buffer: add BufferWithContext::into_parts()
+* vpp-plugin: add vnet_helper_ip4_header_checksum
+* vlib: node: support incrementing error counters for process nodes
+
+### Changed
+
+* vlib: bindings: update bindings with change to vpp 26.02
+* vlib: node: relax constraints on constructing and using NodeRuntimeRef
+* vlib: buffer: no longer mark buffer allocation types/methods as experimental
+
+### Fixed
+
+* vlib: sync: fix rustdoc::invalid-rust-codeblocks
+* vlib: node: fix missing conditions in node registration safety doc
+* vppinfra: fix renamed_and_removed_lints compiler warning
+* vlib: buffer: fix undefined behaviour in get_buffers test
+* buffer: add additional pre-condition in MainRef::get_buffers
+* vppinfra: vec: fix UB in IntoIter<T>::clone
+* vnet: buffer: improve vnet_get_config_data safety doc
+* vlib: sync: improve Sync safety doc for BarrierRwLockWriteGuard
+
 # 0.2.1 (12th April 2026)
 
 ### Added
